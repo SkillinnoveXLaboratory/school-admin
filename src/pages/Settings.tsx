@@ -8,9 +8,9 @@ export function SettingsPage() {
     <div className="space-y-6 max-w-3xl">
       <PageHeader eyebrow="You" title="Settings" subtitle="Profile, school context, and notifications." />
       <section className="card p-6">
-        <h2 className="font-display text-base font-semibold">Active tenant</h2>
-        <p className="text-sm text-ink-500 mt-1">Used as <code className="font-mono text-xs text-ink-700">X-School-ID</code> on every request.</p>
-        <p className="font-mono text-xs mt-3 break-all bg-muted rounded-lg p-3">{activeSchoolId ?? '— not set —'}</p>
+        <h2 className="font-display text-base font-semibold">Active school</h2>
+        <p className="text-sm text-ink-500 mt-1">The school account you're managing in this session.</p>
+        <p className="mt-3 text-base font-semibold text-ink-900">{user?.role === 'SUPER_ADMIN' ? 'Multi-tenant' : (activeSchoolId ? 'Connected ✓' : '— not connected —')}</p>
       </section>
       <section className="card p-6 space-y-5">
         <h2 className="font-display text-base font-semibold">Profile</h2>

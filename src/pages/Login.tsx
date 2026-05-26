@@ -67,9 +67,9 @@ export function LoginPage() {
           <p className="text-ink-500 mt-2 text-sm">School Admin console.</p>
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
             <div>
-              <label className="label">School ID (X-School-ID)</label>
-              <input className="input mt-2 font-mono text-xs" value={schoolId} onChange={e=>setSchoolId(e.target.value)} placeholder="mongo object id" />
-              <p className="text-[11px] text-ink-400 mt-1.5">Auto-detected after first sign-in.</p>
+              <label className="label">School code</label>
+              <input className="input mt-2" value={schoolId} onChange={e=>setSchoolId(e.target.value)} placeholder="e.g. greenwood" />
+              <p className="text-[11px] text-ink-400 mt-1.5">Short identifier from your welcome email. Auto-detected after first sign-in.</p>
             </div>
             <div>
               <label className="label">Username</label>
