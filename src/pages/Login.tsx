@@ -23,9 +23,9 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       if (schoolId) setActiveSchool(schoolId);
-      const { token, user } = await Auth.login({ username, password });
+      const { token, refreshToken, user } = await Auth.login({ username, password });
       if (user.schoolId) setActiveSchool(user.schoolId);
-      loginSuccess(token, user);
+      loginSuccess(token, refreshToken, user, user.schoolId);
       toast.success(`Welcome, ${user.firstName}`);
       navigate('/', { replace: true });
     } catch (err: any) {

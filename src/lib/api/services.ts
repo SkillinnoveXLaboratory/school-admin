@@ -3,6 +3,7 @@
  * Each module corresponds to a tag in the OpenAPI doc.
  */
 import { api, unwrap } from './client';
+import { parseAuthTokens } from './tokenRefresh';
 import type {
   ID,
   LoginCredentials,
@@ -13,8 +14,19 @@ import type {
 
 /* ───────── Auth (school-scoped users) ───────── */
 export const Auth = {
-  login: (creds: LoginCredentials) =>
-    unwrap<LoginResponse>(api.post('/auth/login', creds)),
+  login: async (creds: LoginCredentials): Promise<LoginResponse & { refreshToken: string | null }> => {
+    const res = await api.post('/auth/login', creds);
+    const body = res.data as Record<string, unknown>;
+    const tokens = parseAuthTokens(body);
+    const nested = body.data as Record<string, unknown> | undefined;
+    const user = (nested?.user ?? body.user) as LoginResponse['user'];
+    const token = tokens?.accessToken ?? (nested?.token as string) ?? (body.token as string);
+    return {
+      token,
+      user,
+      refreshToken: tokens?.refreshToken ?? null,
+    };
+  },
   refresh: () => unwrap<LoginResponse>(api.post('/auth/refresh')),
   me:      () => unwrap<LoginResponse['user']>(api.get('/auth/me')),
 };

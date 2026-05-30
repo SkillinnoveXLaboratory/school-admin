@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/lib/stores/auth';
+import { attachTokenRefreshInterceptor } from './tokenRefresh';
 
 const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'https://schoolmate.digitalleadpro.com/api/v1';
@@ -16,10 +17,21 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+attachTokenRefreshInterceptor(
+  api,
+  () => useAuthStore.getState().refreshToken,
+  ({ accessToken, refreshToken }) => {
+    const { user, activeSchoolId } = useAuthStore.getState();
+    if (user) useAuthStore.getState().loginSuccess(accessToken, refreshToken, user, activeSchoolId);
+    else useAuthStore.setState({ token: accessToken, refreshToken });
+  },
+  () => useAuthStore.getState().logout(),
+);
+
 api.interceptors.response.use(
   (r) => r,
   (error: AxiosError<{ success: false; code: string; message: string }>) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && (error.config as { _retry?: boolean })?._retry) {
       useAuthStore.getState().logout();
     }
     return Promise.reject(error);
