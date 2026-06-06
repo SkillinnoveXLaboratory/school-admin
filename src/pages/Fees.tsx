@@ -1,229 +1,432 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
+import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Icon } from '@/components/Icon';
-import { Lottie } from '@/components/Lottie';
 import { Modal } from '@/components/Modal';
-import { Fees, Data } from '@/lib/api/services';
-
-const SAMPLE = [
-  { id: '1', number: 'INV-1024', studentName: 'Aanya Sharma',  dueDate: '2026-06-10', status: 'DUE',  amount: 12500 },
-  { id: '2', number: 'INV-1025', studentName: 'Karan Patel',   dueDate: '2026-06-04', status: 'PAID', amount: 11000 },
-  { id: '3', number: 'INV-1026', studentName: 'Riya Pillai',   dueDate: '2026-06-15', status: 'DUE',  amount: 13800 },
-  { id: '4', number: 'INV-1027', studentName: 'Vihaan Singh',  dueDate: '2026-05-25', status: 'DUE',  amount: 14200 },
-];
+import { Academic, Fees, Students } from '@/lib/api/services';
+import { formatDate, idOf, isRecord, money, rowsFrom, textOf } from '@/lib/viewUtils';
 
 export function FeesPage() {
   const qc = useQueryClient();
-  const [paid, setPaid] = useState(false);
-  const [active, setActive] = useState<any>(null);
+  const [activeInvoice, setActiveInvoice] = useState<any>(null);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [structureOpen, setStructureOpen] = useState(false);
-  const { data: invoices = [] } = useQuery<any[]>({ queryKey: ['invoices'], queryFn: () => Fees.invoices.list() as any });
-  const { data: ledger } = useQuery<any>({ queryKey: ['daily-cash'], queryFn: () => Fees.dailyCashLedger() });
-  const rows = invoices.length ? invoices : SAMPLE;
+  const [studentId, setStudentId] = useState('');
+  const [amountPaid, setAmountPaid] = useState('');
+  const [academicYear, setAcademicYear] = useState(defaultAcademicYear());
+
+  const invoicesQuery = useQuery({ queryKey: ['invoices'], queryFn: () => Fees.invoices.list({ page: 1, limit: 50 }) });
+  const ledgerQuery = useQuery({ queryKey: ['daily-cash'], queryFn: () => Fees.dailyCashLedger({ date: new Date().toISOString().slice(0, 10) }) });
+  const studentsQuery = useQuery({ queryKey: ['students', 'fees'], queryFn: () => Students.list({ page: 1, limit: 100 }) });
+  const structuresQuery = useQuery({ queryKey: ['fee-structures'], queryFn: () => Fees.structures.list() });
+
+  const invoices = rowsFrom<any>(invoicesQuery.data, ['invoices', 'data']);
+  const ledgerInvoices = rowsFrom<any>(ledgerQuery.data, ['invoices', 'data']);
+  const structures = rowsFrom<any>(structuresQuery.data, ['structures', 'data']);
+  const summary = isRecord(ledgerQuery.data?.summary) ? ledgerQuery.data.summary : {};
+  const students = studentsQuery.data?.students ?? [];
+
+  const selectedStudent = students.find((student) => student.id === studentId);
+  const totalInvoiced = useMemo(() => invoices.reduce((sum, invoice) => sum + Number(invoice.amountPaid ?? 0), 0), [invoices]);
 
   const pay = useMutation({
-    mutationFn: ({ studentId, amount }: { studentId: string; amount: number }) => Fees.payCash(studentId, { amount, mode: 'CASH' }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['invoices'] }); setPaid(true); toast.success('Payment recorded'); setTimeout(() => setPaid(false), 4000); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Fees.payCash(studentId, {
+      amountPaid: Number(amountPaid),
+      academicYear,
+    }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Cash payment recorded');
+      setAmountPaid('');
+      setAcademicYear(defaultAcademicYear());
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['daily-cash'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to record cash payment'),
   });
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Module 8" title="Fees & cash"
-        subtitle="Collect cash payments, manage invoices, and track daily ledger."
-        actions={<>
-          <button onClick={() => setStructureOpen(true)} className="btn-outline">Fee structures</button>
-          <button onClick={() => Data.exportFinance().then(() => toast.success('Export ready')).catch(()=>toast.error('Failed'))} className="btn-outline">
-            <Icon name="download" size={16}/> Daily ledger
-          </button>
-          <button onClick={() => setDiscountOpen(true)} className="btn-primary"><Icon name="plus" size={16}/> Apply discount</button>
-        </>} />
+      <PageHeader
+        eyebrow="Module 8"
+        title="Fees & cash"
+        subtitle="Live baseline structures, cash collections, invoices, and daily ledger."
+        actions={(
+          <>
+            <button onClick={() => setStructureOpen(true)} className="btn-outline w-full justify-center sm:w-auto">
+              <Icon name="settings" size={16} /> Structures
+            </button>
+            <button onClick={() => setDiscountOpen(true)} className="btn-primary w-full justify-center sm:w-auto">
+              <Icon name="plus" size={16} /> Discount
+            </button>
+          </>
+        )}
+      />
 
-      <section className="grid sm:grid-cols-4 gap-3">
-        {[
-          { label: "Today's collection", value: '₹1.42L', tone: 'success' },
-          { label: 'Outstanding',         value: '₹4.12L', tone: 'warning' },
-          { label: 'Invoices due',        value: rows.filter((r:any) => r.status === 'DUE').length, tone: 'brand' },
-          { label: 'Defaulters',          value: 9,        tone: 'danger' },
-        ].map((s) => (
-          <div key={s.label} className="card p-4">
-            <p className="text-xs uppercase tracking-wider text-ink-400">{s.label}</p>
-            <p className="font-display text-[26px] font-bold mt-1">{s.value}</p>
-          </div>
-        ))}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Today's collection" value={money(summary.totalCollected ?? 0)} sub={`${summary.transactionCount ?? 0} transactions`} />
+        <Stat label="Invoices" value={textOf(invoicesQuery.data?.meta, ['total'], String(invoices.length))} sub="returned by API" />
+        <Stat label="Invoice cash" value={money(totalInvoiced)} sub="current page total" />
+        <Stat label="Fee structures" value={structures.length} sub="baseline rows" />
       </section>
 
-      {paid && (
-        <motion.div className="card p-5 flex items-center gap-4 !border-success bg-success-bg"
-          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <Lottie src="/lottie/payment-success.json" className="w-16 h-16" loop={false} />
-          <div>
-            <div className="font-display font-semibold text-success">Cash payment recorded</div>
-            <div className="text-xs text-success/80">Receipt RC-{Math.floor(Math.random()*9000+1000)} generated · SMS sent to parent</div>
+      <section className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className="card overflow-hidden">
+          <div className="border-b border-line p-4 sm:p-5">
+            <h2 className="font-display text-lg font-semibold">Recent invoices</h2>
+            <p className="text-sm text-ink-500">Loaded from `/fees/invoices`.</p>
           </div>
-        </motion.div>
-      )}
-
-      <section className="grid lg:grid-cols-3 gap-6">
-        <div className="card p-6 lg:col-span-2">
-          <h2 className="font-display text-lg font-semibold">Recent invoices</h2>
-          <table className="w-full mt-4">
-            <thead className="text-left text-ink-400 text-[11px] uppercase tracking-wider">
-              <tr><th className="pb-3">Invoice</th><th>Student</th><th>Due</th><th>Status</th><th className="text-right">Amount</th><th></th></tr>
-            </thead>
-            <tbody>
-              {rows.map((inv:any) => (
-                <tr key={inv.id} className="border-t border-line/60 text-sm hover:bg-muted/30">
-                  <td className="py-3 font-mono text-xs">{inv.number}</td>
-                  <td>{inv.studentName}</td>
-                  <td className="text-ink-500 text-xs">{inv.dueDate}</td>
-                  <td>{inv.status === 'PAID' ? <span className="chip-success">●&nbsp;Paid</span> : <span className="chip-warning">●&nbsp;Due</span>}</td>
-                  <td className="text-right font-semibold">₹{inv.amount.toLocaleString()}</td>
-                  <td className="text-right pl-2"><button onClick={() => setActive(inv)} className="btn-ghost py-1 px-2 text-xs">View</button></td>
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[760px]">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="table-header">Invoice</th>
+                  <th className="table-header">Student</th>
+                  <th className="table-header">Academic year</th>
+                  <th className="table-header">Date</th>
+                  <th className="table-header text-right">Amount</th>
+                  <th className="table-header text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {invoices.map((invoice) => (
+                  <tr key={idOf(invoice)} className="hover:bg-muted/40">
+                    <td className="table-cell font-mono text-xs">{textOf(invoice, ['invoiceNumber'])}</td>
+                    <td className="table-cell">{textOf(invoice, ['studentName'], textOf(invoice, ['studentId']))}</td>
+                    <td className="table-cell">{textOf(invoice, ['academicYear'])}</td>
+                    <td className="table-cell">{formatDate(textOf(invoice, ['createdAt'], ''))}</td>
+                    <td className="table-cell text-right font-semibold">{money(invoice.amountPaid)}</td>
+                    <td className="table-cell text-right">
+                      <button onClick={() => setActiveInvoice(invoice)} className="btn-ghost px-3 py-1.5 text-xs">View</button>
+                    </td>
+                  </tr>
+                ))}
+                {!invoices.length && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-ink-400">No invoices returned.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="md:hidden divide-y divide-line/60">
+            {invoices.map((invoice) => (
+              <button key={idOf(invoice)} onClick={() => setActiveInvoice(invoice)} className="w-full p-4 text-left hover:bg-muted/30">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold truncate">{textOf(invoice, ['invoiceNumber'])}</p>
+                    <p className="text-xs text-ink-400 mt-1 truncate">{textOf(invoice, ['studentName'], textOf(invoice, ['studentId']))}</p>
+                  </div>
+                  <p className="font-semibold">{money(invoice.amountPaid)}</p>
+                </div>
+                <p className="mt-2 text-xs text-ink-400">{formatDate(textOf(invoice, ['createdAt'], ''))} · {textOf(invoice, ['academicYear'])}</p>
+              </button>
+            ))}
+            {!invoices.length && <p className="p-6 text-center text-sm text-ink-400">No invoices returned.</p>}
+          </div>
         </div>
 
-        <div className="card p-6">
-          <h2 className="font-display text-lg font-semibold">Collect cash</h2>
-          <p className="text-xs text-ink-400">Quick capture — no card terminal needed.</p>
-          <form onSubmit={(e) => {
-              e.preventDefault();
-              const fd = new FormData(e.currentTarget);
-              pay.mutate({ studentId: String(fd.get('studentId')), amount: Number(fd.get('amount')) });
-              (e.target as HTMLFormElement).reset();
-            }} className="mt-4 space-y-3">
-            <div><label className="label">Student ID</label><input name="studentId" required className="input mt-2 font-mono text-xs" placeholder="STU-2026-0123"/></div>
-            <div><label className="label">Amount (₹)</label><input name="amount" type="number" required min={1} className="input mt-2" placeholder="12500"/></div>
-            <button type="submit" disabled={pay.isPending} className="btn-primary w-full"><Icon name="finance" size={16}/> {pay.isPending ? 'Recording…' : 'Record payment'}</button>
-          </form>
-          {ledger && (
-            <div className="mt-5 p-4 rounded-xl bg-brand-50 text-brand-700">
-              <p className="text-xs uppercase tracking-wider">Today's cash ledger</p>
-              <p className="font-display text-xl font-bold mt-1">₹{(ledger.balance ?? 142000).toLocaleString()}</p>
+        <aside className="space-y-5">
+          <div className="card p-4 sm:p-5">
+            <h2 className="font-display text-lg font-semibold">Collect cash</h2>
+            <div className="mt-4 space-y-3">
+              <Select label="Student" value={studentId} onChange={setStudentId}>
+                <option value="">Select student</option>
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>{student.firstName} {student.lastName}</option>
+                ))}
+              </Select>
+              <Input label="Academic year" value={academicYear} onChange={setAcademicYear} />
+              <Input label="Amount paid" type="number" value={amountPaid} onChange={setAmountPaid} />
+              <button
+                onClick={() => pay.mutate()}
+                disabled={pay.isPending || !studentId || !academicYear || Number(amountPaid) <= 0}
+                className="btn-primary w-full"
+              >
+                <Icon name="finance" size={16} /> {pay.isPending ? 'Recording...' : 'Record cash'}
+              </button>
+              {selectedStudent && (
+                <p className="rounded-xl bg-muted/50 p-3 text-xs text-ink-500">
+                  Recording against {selectedStudent.firstName} {selectedStudent.lastName}.
+                </p>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+
+          <div className="card p-4 sm:p-5">
+            <h2 className="font-display text-lg font-semibold">Daily ledger</h2>
+            <p className="text-sm text-ink-500">Report date: {textOf(ledgerQuery.data, ['reportDate'], new Date().toISOString().slice(0, 10))}</p>
+            <div className="mt-4 space-y-2">
+              {ledgerInvoices.slice(0, 4).map((invoice) => (
+                <div key={idOf(invoice)} className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 p-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm truncate">{textOf(invoice, ['invoiceNumber'])}</p>
+                    <p className="text-xs text-ink-400 truncate">{textOf(invoice, ['studentName'], textOf(invoice, ['studentId']))}</p>
+                  </div>
+                  <p className="font-semibold text-sm">{money(invoice.amountPaid)}</p>
+                </div>
+              ))}
+              {!ledgerInvoices.length && <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-400">No daily cash rows returned.</p>}
+            </div>
+          </div>
+        </aside>
       </section>
 
       <AnimatePresence>
-        {active && <InvoiceDetailModal invoice={active} onClose={() => setActive(null)}/>}
-        {discountOpen && <DiscountModal onClose={() => setDiscountOpen(false)}/>}
-        {structureOpen && <FeeStructuresModal onClose={() => setStructureOpen(false)}/>}
+        {activeInvoice && <InvoiceDetailModal invoice={activeInvoice} onClose={() => setActiveInvoice(null)} />}
+        {discountOpen && <DiscountModal students={students} onClose={() => setDiscountOpen(false)} onSaved={() => { setDiscountOpen(false); qc.invalidateQueries({ queryKey: ['invoices'] }); }} />}
+        {structureOpen && <FeeStructuresModal structures={structures} onClose={() => setStructureOpen(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['fee-structures'] }); }} />}
       </AnimatePresence>
     </div>
   );
 }
 
 function InvoiceDetailModal({ invoice, onClose }: { invoice: any; onClose: () => void }) {
-  const pay = useMutation({
-    mutationFn: () => Fees.payCash(invoice.studentId ?? 'unknown', { amount: invoice.amount, invoiceId: invoice.id, mode: 'CASH' }),
-    onSuccess: () => { toast.success('Marked paid'); onClose(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+  const detailQuery = useQuery({
+    queryKey: ['invoice-detail', idOf(invoice)],
+    queryFn: () => Fees.invoices.get(idOf(invoice)),
+    enabled: Boolean(idOf(invoice)),
+    retry: false,
   });
+  const detail = isRecord(detailQuery.data?.data) ? detailQuery.data.data : invoice;
   return (
-    <Modal title={`Invoice ${invoice.number}`} onClose={onClose}
-      footer={<>
-        <button onClick={() => window.print()} className="btn-ghost"><Icon name="download" size={14}/> Print</button>
-        <button onClick={onClose} className="btn-ghost">Close</button>
-        {invoice.status !== 'PAID' && <button onClick={() => pay.mutate()} disabled={pay.isPending} className="btn-primary"><Icon name="finance" size={14}/> {pay.isPending ? 'Marking…' : 'Mark paid (cash)'}</button>}
-      </>}>
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-display text-xl font-semibold">{invoice.studentName}</h3>
-          <p className="text-sm text-ink-500 font-mono">{invoice.number}</p>
-        </div>
-        {invoice.status === 'PAID' ? <span className="chip-success">●&nbsp;Paid</span> : <span className="chip-warning">●&nbsp;Due</span>}
+    <Modal
+      title={textOf(invoice, ['invoiceNumber'], 'Invoice')}
+      onClose={onClose}
+      footer={<button onClick={onClose} className="btn-ghost">Close</button>}
+    >
+      {detailQuery.error && (
+        <p className="mb-4 rounded-xl border border-warning-bg bg-warning-bg/60 p-3 text-sm text-warning">
+          Invoice detail endpoint is restricted for this token, showing list data.
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Info label="Student" value={textOf(detail, ['studentName'], textOf(detail, ['studentId']))} />
+        <Info label="Amount paid" value={money(detail.amountPaid)} />
+        <Info label="Payment method" value={textOf(detail, ['paymentMethod'], 'CASH')} />
+        <Info label="Payment date" value={formatDate(textOf(detail, ['paymentDate', 'createdAt'], ''))} />
+        <Info label="Remaining balance" value={money(detail.remainingBalanceAfter ?? 0)} />
+        <Info label="Academic year" value={textOf(detail, ['academicYear'])} />
       </div>
-      <hr className="border-line my-5"/>
-      <table className="w-full text-sm">
-        <thead><tr className="text-ink-400 text-[11px] uppercase tracking-wider"><th className="text-left pb-2">Item</th><th className="text-right pb-2">Amount</th></tr></thead>
-        <tbody className="divide-y divide-line">
-          <tr><td className="py-2">Tuition fee</td><td className="text-right">₹{(invoice.amount * 0.7).toLocaleString()}</td></tr>
-          <tr><td className="py-2">Activity charge</td><td className="text-right">₹{(invoice.amount * 0.15).toLocaleString()}</td></tr>
-          <tr><td className="py-2">Books & materials</td><td className="text-right">₹{(invoice.amount * 0.1).toLocaleString()}</td></tr>
-          <tr><td className="py-2">Transport</td><td className="text-right">₹{(invoice.amount * 0.05).toLocaleString()}</td></tr>
-          <tr className="border-t-2 border-ink-900"><td className="py-3 font-semibold">Total</td><td className="text-right font-bold font-display text-lg">₹{invoice.amount.toLocaleString()}</td></tr>
-        </tbody>
-      </table>
-      <p className="text-xs text-ink-400 mt-4">Due {invoice.dueDate}</p>
     </Modal>
   );
 }
 
-function DiscountModal({ onClose }: { onClose: () => void }) {
-  const [f, setF] = useState({ studentId: '', amount: 0, reason: 'SCHOLARSHIP' });
+function DiscountModal({ students, onClose, onSaved }: { students: any[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({ studentId: '', discountAmount: '', reason: '' });
   const apply = useMutation({
-    mutationFn: () => Fees.applyDiscount(f.studentId, { amount: f.amount, reason: f.reason }),
-    onSuccess: () => { toast.success('Discount applied'); onClose(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Fees.applyDiscount(form.studentId, {
+      discountAmount: Number(form.discountAmount),
+      reason: form.reason,
+    }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Discount applied');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to apply discount'),
   });
   return (
-    <Modal title="Apply scholarship / discount" onClose={onClose}
-      footer={<>
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => apply.mutate()} disabled={apply.isPending || !f.studentId} className="btn-primary">{apply.isPending ? 'Applying…' : 'Apply'}</button>
-      </>}>
+    <Modal
+      title="Apply scholarship / discount"
+      onClose={onClose}
+      footer={(
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => apply.mutate()} disabled={apply.isPending || !form.studentId || Number(form.discountAmount) <= 0} className="btn-primary">
+            {apply.isPending ? 'Applying...' : 'Apply'}
+          </button>
+        </>
+      )}
+    >
       <div className="space-y-3">
-        <div><label className="label">Student ID</label><input className="input mt-2 font-mono text-xs" value={f.studentId} onChange={(e) => setF({ ...f, studentId: e.target.value })}/></div>
-        <div><label className="label">Amount (₹)</label><input type="number" className="input mt-2" value={f.amount} onChange={(e) => setF({ ...f, amount: Number(e.target.value) })}/></div>
-        <div><label className="label">Reason</label>
-          <select className="input mt-2" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}>
-            <option>SCHOLARSHIP</option><option>SIBLING_DISCOUNT</option><option>STAFF_DISCOUNT</option><option>HARDSHIP</option><option>OTHER</option>
-          </select>
-        </div>
+        <Select label="Student" value={form.studentId} onChange={(studentId) => setForm({ ...form, studentId })}>
+          <option value="">Select student</option>
+          {students.map((student) => (
+            <option key={student.id} value={student.id}>{student.firstName} {student.lastName}</option>
+          ))}
+        </Select>
+        <Input label="Discount amount" type="number" value={form.discountAmount} onChange={(discountAmount) => setForm({ ...form, discountAmount })} />
+        <Input label="Reason" value={form.reason} onChange={(reason) => setForm({ ...form, reason })} />
       </div>
     </Modal>
   );
 }
 
-function FeeStructuresModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
-  const { data = [] } = useQuery<any[]>({ queryKey: ['fee-structures'], queryFn: () => Fees.structures.list() as any });
-  const [f, setF] = useState({ name: '', classId: '', tuition: 0, transport: 0, activity: 0 });
+function FeeStructuresModal({ structures, onClose, onSaved }: { structures: any[]; onClose: () => void; onSaved: () => void }) {
+  const [baselineForm, setBaselineForm] = useState({
+    classId: '',
+    academicYear: defaultAcademicYear(),
+    amount: '',
+  });
+  const [ledgerYear, setLedgerYear] = useState(defaultAcademicYear());
+  const classesQuery = useQuery({ queryKey: ['classes', 'fees'], queryFn: () => Academic.classes.list() });
   const create = useMutation({
-    mutationFn: () => Fees.structures.create(f),
-    onSuccess: () => { toast.success('Structure saved'); qc.invalidateQueries({ queryKey: ['fee-structures'] }); setF({ name: '', classId: '', tuition: 0, transport: 0, activity: 0 }); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Fees.structures.create({
+      classId: baselineForm.classId,
+      amount: Number(baselineForm.amount),
+      academicYear: baselineForm.academicYear,
+    }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Fee structure saved');
+      setBaselineForm({ classId: '', academicYear: defaultAcademicYear(), amount: '' });
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to save fee structure'),
   });
   const generate = useMutation({
-    mutationFn: () => Fees.generateYearly({ year: new Date().getFullYear() }),
-    onSuccess: () => { toast.success('Yearly invoices queued'); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Fees.generateYearly({ academicYear: ledgerYear }),
+    onSuccess: (body: any) => toast.success(body?.message || 'Yearly fee generation queued'),
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to generate yearly ledger'),
   });
+  const classes = classesQuery.data?.classes ?? [];
+
   return (
-    <Modal title="Fee structures" onClose={onClose} size="lg"
-      footer={<>
-        <button onClick={onClose} className="btn-ghost">Close</button>
-        <button onClick={() => generate.mutate()} disabled={generate.isPending} className="btn-primary">{generate.isPending ? 'Queuing…' : 'Generate yearly invoices'}</button>
-      </>}>
-      <h4 className="label">Existing baselines</h4>
-      <table className="w-full mt-3 text-sm">
-        <thead><tr className="text-ink-400 text-[11px] uppercase"><th className="text-left pb-2">Name</th><th>Class</th><th>Tuition</th><th>Transport</th><th>Activity</th></tr></thead>
-        <tbody className="divide-y divide-line">
-          {(data.length ? data : [{ name: 'Standard Gr 1-5', classId: 'g1-5', tuition: 9000, transport: 2400, activity: 1500 }, { name: 'Standard Gr 6-10', classId: 'g6-10', tuition: 12000, transport: 2400, activity: 1500 }]).map((s: any, i: number) => (
-            <tr key={i}><td className="py-2">{s.name}</td><td className="font-mono text-xs">{s.classId}</td><td>₹{s.tuition?.toLocaleString()}</td><td>₹{s.transport?.toLocaleString()}</td><td>₹{s.activity?.toLocaleString()}</td></tr>
-          ))}
-        </tbody>
-      </table>
-      <hr className="border-line my-5"/>
-      <h4 className="label">Add new baseline</h4>
-      <div className="grid grid-cols-2 gap-3 mt-3">
-        <div><label className="label">Name</label><input className="input mt-2" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })}/></div>
-        <div><label className="label">Class ID</label><input className="input mt-2 font-mono text-xs" value={f.classId} onChange={(e) => setF({ ...f, classId: e.target.value })}/></div>
-        <div><label className="label">Tuition (₹/yr)</label><input type="number" className="input mt-2" value={f.tuition} onChange={(e) => setF({ ...f, tuition: Number(e.target.value) })}/></div>
-        <div><label className="label">Transport (₹/yr)</label><input type="number" className="input mt-2" value={f.transport} onChange={(e) => setF({ ...f, transport: Number(e.target.value) })}/></div>
-        <div><label className="label">Activity (₹/yr)</label><input type="number" className="input mt-2" value={f.activity} onChange={(e) => setF({ ...f, activity: Number(e.target.value) })}/></div>
-      </div>
-      <div className="mt-4 flex justify-end">
-        <button onClick={() => create.mutate()} disabled={create.isPending || !f.name} className="btn-outline">{create.isPending ? 'Saving…' : 'Add baseline'}</button>
+    <Modal
+      title="Fee structures"
+      onClose={onClose}
+      size="full"
+      footer={(
+        <>
+          <button onClick={onClose} className="btn-ghost">Close</button>
+        </>
+      )}
+    >
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="rounded-[28px] border border-brand-100 bg-gradient-to-br from-brand-50 via-white to-canvas p-5 sm:p-6 shadow-soft">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-brand-600">Fee workspace</p>
+              <h3 className="mt-2 font-display text-2xl sm:text-3xl font-semibold leading-tight">Baseline setup and yearly ledger generation</h3>
+              <p className="mt-2 max-w-3xl text-sm text-ink-500">
+                Save a class baseline once, then generate yearly ledger entries from that baseline using the academic year.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-3 w-full lg:w-[420px]">
+              <MiniStat label="Baselines" value={structures.length} />
+              <MiniStat label="Classes" value={classes.length} />
+              <MiniStat label="Ledger year" value={ledgerYear} mono />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="font-display text-lg sm:text-xl font-semibold">Create baseline</h3>
+              <p className="mt-1 text-sm text-ink-500">Use this to define the amount for one class and year.</p>
+            </div>
+            <button onClick={() => create.mutate()} disabled={create.isPending || !baselineForm.classId || !baselineForm.academicYear || Number(baselineForm.amount) <= 0} className="btn-outline">
+              {create.isPending ? 'Saving...' : 'Save baseline'}
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr]">
+            <Select label="Class" value={baselineForm.classId} onChange={(classId) => setBaselineForm({ ...baselineForm, classId })}>
+              <option value="">Select class</option>
+              {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
+            </Select>
+            <Input label="Academic year" value={baselineForm.academicYear} onChange={(academicYear) => setBaselineForm({ ...baselineForm, academicYear })} />
+            <Input label="Amount" type="number" value={baselineForm.amount} onChange={(amount) => setBaselineForm({ ...baselineForm, amount })} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="font-display text-lg sm:text-xl font-semibold">Existing baselines</h3>
+              <p className="mt-1 text-sm text-ink-500">All saved baseline fee structures returned by the API.</p>
+            </div>
+            <span className="chip-brand w-fit">{structures.length} records</span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {structures.map((structure) => (
+              <div key={idOf(structure)} className="rounded-2xl border border-line bg-gradient-to-br from-white to-muted/30 p-4 shadow-soft">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="font-display text-base font-semibold break-words">{textOf(structure, ['className'], textOf(structure.classId, ['name'], 'Class not linked'))}</p>
+                    <p className="mt-1 text-xs font-mono text-ink-400 break-all">{idOf(structure.classId) || textOf(structure, ['classId'])}</p>
+                  </div>
+                  <div className="rounded-xl bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700">
+                    {money(structure.amount ?? structure.baseFeeAmount ?? 0)}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-400">
+                  <span className="chip-brand">{textOf(structure, ['academicYear'], '—')}</span>
+                </div>
+              </div>
+            ))}
+            {!structures.length && <p className="rounded-2xl border border-dashed border-line p-4 text-sm text-ink-400">No fee structures returned.</p>}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="font-display text-lg sm:text-xl font-semibold">Generate yearly ledger</h3>
+              <p className="mt-1 text-sm text-ink-500">Creates yearly fee ledger rows from the saved baseline structure.</p>
+            </div>
+            <button
+              onClick={() => generate.mutate()}
+              disabled={generate.isPending || !ledgerYear}
+              className="btn-primary"
+            >
+              {generate.isPending ? 'Queuing...' : 'Generate yearly ledger'}
+            </button>
+          </div>
+          <div className="mt-4 max-w-md">
+            <Input label="Academic year" value={ledgerYear} onChange={setLedgerYear} />
+          </div>
+        </section>
       </div>
     </Modal>
+  );
+}
+
+function defaultAcademicYear() {
+  const now = new Date();
+  const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
+function Stat({ label, value, sub }: { label: string; value: string | number; sub: string }) {
+  return (
+    <div className="stat-card">
+      <p className="label">{label}</p>
+      <p className="mt-2 font-display text-2xl font-bold">{value}</p>
+      <p className="mt-1 text-xs text-ink-400">{sub}</p>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, mono }: { label: string; value: string | number; mono?: boolean }) {
+  return (
+    <div className="rounded-2xl border border-line bg-white/80 p-3 shadow-soft min-w-0">
+      <p className="text-[10px] uppercase tracking-[0.22em] text-ink-400 font-bold">{label}</p>
+      <p className={clsx('mt-2 truncate font-display text-lg font-semibold text-ink-900', mono && 'font-mono text-sm')}>{value}</p>
+    </div>
+  );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-muted/40 p-3">
+      <p className="label">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-ink-900 break-words">{value}</p>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input className="input mt-2" type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: ReactNode }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <select className="input mt-2" value={value} onChange={(event) => onChange(event.target.value)}>{children}</select>
+    </div>
   );
 }

@@ -1,62 +1,4 @@
-import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import { useAuthStore } from '@/lib/stores/auth';
-
-const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? 'https://schoolmate.digitalleadpro.com/api/v1';
-
-export const API_BASE_URL = BASE_URL;
-
-export const api: AxiosInstance = axios.create({
-  baseURL: BASE_URL,
-  timeout: 20_000,
-});
-
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const { token, activeSchoolId } = useAuthStore.getState();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  if (activeSchoolId) config.headers['X-School-ID'] = activeSchoolId;
-  return config;
-});
-
-attachTokenRefreshInterceptor(
-  api,
-  () => useAuthStore.getState().refreshToken,
-  ({ accessToken, refreshToken }) => {
-    const { user, activeSchoolId } = useAuthStore.getState();
-    if (user) useAuthStore.getState().loginSuccess(accessToken, refreshToken, user, activeSchoolId);
-    else useAuthStore.setState({ token: accessToken, refreshToken });
-  },
-  () => useAuthStore.getState().logout(),
-);
-
-api.interceptors.response.use(
-  (r) => r,
-  (error: AxiosError<{ success: false; code: string; message: string }>) => {
-    if (error.response?.status === 401 && (error.config as { _retry?: boolean })?._retry) {
-      useAuthStore.getState().logout();
-    }
-    return Promise.reject(error);
-  }
-);
-
-export type ApiOk<T> = { success: true; data: T; meta?: PaginatedMeta };
-export type ApiErr = { success: false; code: string; message: string };
-export type ApiResponse<T> = ApiOk<T> | ApiErr;
-
-export interface PaginatedMeta {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
-}
-
-/** Unwraps the {success, data} envelope. Throws on api-level failure. */
-export async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>): Promise<T> {
-  const res = await promise;
-  const body = res.data;
-  if (body.success) return body.data;
-  throw new Error(body.message || 'API error');
-}
+import type { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 
 export interface AuthTokens {
   accessToken: string;
@@ -81,7 +23,12 @@ function firstString(...values: unknown[]): string | undefined {
 function parseTokenNode(node: unknown, depth = 0): AuthTokens | null {
   if (!isRecord(node) || depth > 3) return null;
 
-  const accessToken = firstString(node.accessToken, node.token, node.access_token, node.jwt);
+  const accessToken = firstString(
+    node.accessToken,
+    node.token,
+    node.access_token,
+    node.jwt,
+  );
   const refreshToken = firstString(node.refreshToken, node.refresh_token, node.refresh);
 
   if (accessToken) {
@@ -111,7 +58,7 @@ interface RefreshInterceptorOptions {
 }
 
 export function attachTokenRefreshInterceptor(
-  apiInstance: AxiosInstance,
+  api: AxiosInstance,
   getRefreshToken: RefreshTokenGetter,
   onRefreshed: RefreshHandler,
   onLogout: LogoutHandler,
@@ -127,7 +74,7 @@ export function attachTokenRefreshInterceptor(
     if (!inFlight) {
       inFlight = (async () => {
         try {
-          const res = await apiInstance.post(
+          const res = await api.post(
             refreshPath,
             options.refreshRequestData?.(refreshToken) ?? { refreshToken },
             { headers: options.refreshRequestHeaders },
@@ -144,7 +91,7 @@ export function attachTokenRefreshInterceptor(
     return inFlight;
   };
 
-  apiInstance.interceptors.response.use(
+  api.interceptors.response.use(
     (response) => response,
     async (error: AxiosError) => {
       const status = error.response?.status;
@@ -166,7 +113,7 @@ export function attachTokenRefreshInterceptor(
       original.headers = original.headers ?? {};
       original.headers.Authorization = `Bearer ${tokens.accessToken}`;
 
-      return apiInstance.request(original);
+      return api.request(original);
     },
   );
 }

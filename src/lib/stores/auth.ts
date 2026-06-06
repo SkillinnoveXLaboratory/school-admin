@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/lib/api/types';
 
+const LAST_LOGIN_USER_KEY = 'schoolmate-admin-last-login-user';
+
 interface AuthState {
   user: User | null;
   token: string | null;
@@ -35,6 +37,30 @@ export const useAuthStore = create<AuthState>()(
       logout: () =>
         set({ user: null, token: null, refreshToken: null, activeSchoolId: null }),
     }),
-    { name: 'schoolmate-admin-auth' }
+    {
+      name: 'schoolmate-admin-auth',
+      version: 1,
+      merge: (persisted, current) => {
+        const stored = (persisted ?? {}) as Partial<AuthState>;
+        const active = current as AuthState;
+
+        return {
+          ...stored,
+          ...active,
+          user: active.user ?? stored.user ?? null,
+          token: active.token ?? stored.token ?? null,
+          refreshToken: active.refreshToken ?? stored.refreshToken ?? null,
+          activeSchoolId: active.activeSchoolId ?? stored.activeSchoolId ?? null,
+        };
+      },
+    }
   )
 );
+
+useAuthStore.subscribe((state) => {
+  if (typeof window === 'undefined') return;
+
+  if (!state.token && !state.user) {
+    window.localStorage.removeItem(LAST_LOGIN_USER_KEY);
+  }
+});

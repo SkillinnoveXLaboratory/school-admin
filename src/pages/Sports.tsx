@@ -5,124 +5,283 @@ import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
-import { Sports } from '@/lib/api/services';
-
-const SAMPLE = [
-  { id: 's1', name: 'Football',   coach: 'Vinay Kumar',  players: 36, weekly: 6, colorA: '#10B981', colorB: '#0EA5E9' },
-  { id: 's2', name: 'Basketball', coach: 'Aakash Singh', players: 24, weekly: 4, colorA: '#F59E0B', colorB: '#EF4444' },
-  { id: 's3', name: 'Cricket',    coach: 'Suresh Rao',   players: 28, weekly: 5, colorA: '#4F46E5', colorB: '#8B5CF6' },
-  { id: 's4', name: 'Athletics',  coach: 'Rita Menon',   players: 42, weekly: 5, colorA: '#7C3AED', colorB: '#EC4899' },
-  { id: 's5', name: 'Chess',      coach: 'Karthik V.',   players: 18, weekly: 2, colorA: '#0F172A', colorB: '#475569' },
-  { id: 's6', name: 'Swimming',   coach: 'Maya Iyer',    players: 22, weekly: 3, colorA: '#0EA5E9', colorB: '#4F46E5' },
-];
+import { HR, Sports, Students } from '@/lib/api/services';
+import type { HREmployee, Student } from '@/lib/api/types';
+import { compactId, fullName, idOf, rowsFrom, statusClass, textOf } from '@/lib/viewUtils';
 
 export function SportsPage() {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [active, setActive] = useState<any>(null);
-  const { data = [] } = useQuery<any[]>({ queryKey: ['sports'], queryFn: () => Sports.list() as any });
-  const rows = data.length ? data : SAMPLE;
+
+  const sportsQuery = useQuery({ queryKey: ['sports'], queryFn: () => Sports.list() });
+  const employeesQuery = useQuery({ queryKey: ['hr-employees', 'sports'], queryFn: () => HR.employees.list({ page: 1, limit: 100 }) });
+  const studentsQuery = useQuery({ queryKey: ['students', 'sports'], queryFn: () => Students.list({ page: 1, limit: 100 }) });
+
+  const rows = rowsFrom<any>(sportsQuery.data, ['sportsActivities', 'data']);
+  const employees = employeesQuery.data?.employees ?? [];
+  const students = studentsQuery.data?.students ?? [];
+
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Module 6" title="Sports & activities"
-        subtitle="Categories, coaches, and student assignments."
-        actions={<button onClick={() => setCreating(true)} className="btn-primary"><Icon name="plus" size={16}/> New category</button>} />
+      <PageHeader
+        eyebrow="Module 6"
+        title="Sports & activities"
+        subtitle="Live sports activity catalog, instructors, and student assignment."
+        actions={<button onClick={() => setCreating(true)} className="btn-primary"><Icon name="plus" size={16} /> New activity</button>}
+      />
 
-      <section className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {rows.map((s:any, i:number) => (
-          <motion.article key={s.id} onClick={() => setActive(s)} className="card p-5 overflow-hidden relative cursor-pointer hover:shadow-pop hover:border-brand-300 transition-all"
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i*0.04 }}>
-            <div aria-hidden className="absolute -right-10 -top-10 w-40 h-40 rounded-full opacity-20" style={{ background: `linear-gradient(135deg, ${s.colorA}, ${s.colorB})` }} />
-            <div className="relative">
-              <div className="h-11 w-11 rounded-xl text-white grid place-items-center" style={{ background: `linear-gradient(135deg, ${s.colorA}, ${s.colorB})` }}><Icon name="sports" /></div>
-              <h3 className="font-display text-lg font-semibold mt-3">{s.name}</h3>
-              <p className="text-sm text-ink-500">Coach: {s.coach}</p>
-              <div className="mt-4 flex items-center justify-between text-xs text-ink-400">
-                <span>{s.players} players</span>
-                <span>{s.weekly}h / week</span>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Activities" value={rows.length} tone="chip-brand" />
+        <Stat label="Instructors" value={new Set(rows.map((row) => idOf(row.instructorId)).filter(Boolean)).size} tone="chip-success" />
+        <Stat label="Assigned students" value={rows.reduce((total, row) => total + rowsFrom(row, ['assignedStudentIds']).length, 0)} tone="chip-warning" />
+        <Stat label="Staff loaded" value={employees.length} tone="chip-brand" />
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {rows.map((sport, index) => (
+          <motion.button
+            key={idOf(sport)}
+            onClick={() => setActive(sport)}
+            className="card p-4 sm:p-5 text-left transition-all hover:border-brand-300 hover:shadow-pop"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.03 }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-info-bg text-info">
+                <Icon name="sports" size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-display text-lg font-semibold truncate">{textOf(sport, ['activityName'])}</h3>
+                <p className="mt-1 text-sm text-ink-500 truncate">Instructor: {instructorName(sport.instructorId, employees)}</p>
               </div>
             </div>
-          </motion.article>
+            <div className="mt-5 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="label">Assigned</p>
+                <p className="mt-1 font-semibold text-ink-900">{rowsFrom(sport, ['assignedStudentIds']).length}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="label">Activity ID</p>
+                <p className="mt-1 font-mono text-[11px] text-ink-600">{compactId(sport)}</p>
+              </div>
+            </div>
+          </motion.button>
         ))}
+        {!rows.length && (
+          <div className="rounded-2xl border border-dashed border-line p-10 text-center text-sm text-ink-400 sm:col-span-2 xl:col-span-3">
+            {sportsQuery.isLoading ? 'Loading sports activities...' : 'No sports activities returned by the API.'}
+          </div>
+        )}
       </section>
 
       <AnimatePresence>
-        {creating && <SportFormModal onClose={() => setCreating(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['sports'] }); setCreating(false); }}/>}
-        {active && <SportDetailModal sport={active} onClose={() => setActive(null)} onChanged={() => qc.invalidateQueries({ queryKey: ['sports'] })}/>}
+        {creating && <SportFormModal employees={employees} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: ['sports'] }); }} />}
+        {active && (
+          <SportDetailModal
+            sport={active}
+            employees={employees}
+            students={students}
+            onClose={() => setActive(null)}
+            onChanged={() => qc.invalidateQueries({ queryKey: ['sports'] })}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
 }
 
-function SportFormModal({ sport, onClose, onSaved }: { sport?: any; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState({ name: sport?.name ?? '', coach: sport?.coach ?? '', weekly: sport?.weekly ?? 4 });
-  const save = useMutation({
-    mutationFn: () => sport ? Sports.update(sport.id, f) : Sports.create(f),
-    onSuccess: () => { toast.success(sport ? 'Updated' : 'Category created'); onSaved(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+function SportFormModal({ sport, employees, onClose, onSaved }: { sport?: any; employees: HREmployee[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    activityName: textOf(sport, ['activityName'], ''),
+    instructorId: idOf(sport?.instructorId) || employees[0]?.userId || employees[0]?.id || '',
   });
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        activityName: form.activityName,
+        ...(form.instructorId ? { instructorId: form.instructorId } : {}),
+      };
+      return sport ? Sports.update(idOf(sport), payload) : Sports.create(payload);
+    },
+    onSuccess: (body: any) => {
+      toast.success(body?.message || (sport ? 'Sports activity updated' : 'Sports activity created'));
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to save activity'),
+  });
+
   return (
-    <Modal title={sport ? `Edit ${sport.name}` : 'New sport category'} onClose={onClose}
-      footer={<>
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => save.mutate()} disabled={save.isPending || !f.name} className="btn-primary">{save.isPending ? 'Saving…' : 'Save'}</button>
-      </>}>
+    <Modal
+      title={sport ? 'Edit sports activity' : 'New sports activity'}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => save.mutate()} disabled={save.isPending || !form.activityName} className="btn-primary">
+            {save.isPending ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
       <div className="space-y-3">
-        <div><label className="label">Name</label><input className="input mt-2" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })}/></div>
-        <div><label className="label">Coach</label><input className="input mt-2" value={f.coach} onChange={(e) => setF({ ...f, coach: e.target.value })}/></div>
-        <div><label className="label">Hours / week</label><input type="number" className="input mt-2" value={f.weekly} onChange={(e) => setF({ ...f, weekly: Number(e.target.value) })}/></div>
+        <Input label="Activity name" value={form.activityName} onChange={(activityName) => setForm({ ...form, activityName })} />
+        <div>
+          <label className="label">Instructor</label>
+          <select className="input mt-2" value={form.instructorId} onChange={(event) => setForm({ ...form, instructorId: event.target.value })}>
+            <option value="">No instructor</option>
+            {employees.map((employee) => (
+              <option key={employee.id} value={employee.userId || employee.id}>
+                {employee.firstName || employee.username || employee.email || compactId(employee.id)} {employee.lastName} · {employee.role}
+              </option>
+            ))}
+          </select>
+        </div>
+        {!employees.length && <p className="text-xs text-warning">No staff records returned. Create an employee first, then select that staff user here.</p>}
       </div>
     </Modal>
   );
 }
 
-function SportDetailModal({ sport, onClose, onChanged }: { sport: any; onClose: () => void; onChanged: () => void }) {
+function SportDetailModal({ sport, employees, students, onClose, onChanged }: { sport: any; employees: HREmployee[]; students: Student[]; onClose: () => void; onChanged: () => void }) {
   const [editing, setEditing] = useState(false);
-  const [studentId, setStudentId] = useState('');
+  const [studentId, setStudentId] = useState(students[0]?.id ?? '');
+  const detailQuery = useQuery({ queryKey: ['sports', idOf(sport)], queryFn: () => Sports.get(idOf(sport)), enabled: Boolean(idOf(sport)) });
+  const liveSport = detailQuery.data?.sportsActivity ?? detailQuery.data?.data ?? sport;
+  const assigned = rowsFrom<any>(liveSport, ['assignedStudentIds']);
+
   const assign = useMutation({
-    mutationFn: () => Sports.assign(sport.id, { studentId }),
-    onSuccess: () => { toast.success('Player assigned'); setStudentId(''); onChanged(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Sports.assign(idOf(liveSport), { studentIds: [studentId] }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Student assigned');
+      onChanged();
+      detailQuery.refetch();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to assign student'),
+  });
+  const unassign = useMutation({
+    mutationFn: (id: string) => Sports.unassign(idOf(liveSport), { studentIds: [id] }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Student removed');
+      onChanged();
+      detailQuery.refetch();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to remove student'),
   });
   const remove = useMutation({
-    mutationFn: () => Sports.remove(sport.id),
-    onSuccess: () => { toast.success('Removed'); onChanged(); onClose(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Sports.remove(idOf(liveSport)),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Sports activity removed');
+      onChanged();
+      onClose();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to delete activity'),
   });
-  if (editing) return <SportFormModal sport={sport} onClose={() => setEditing(false)} onSaved={() => { onChanged(); setEditing(false); }}/>;
+
+  if (editing) {
+    return (
+      <SportFormModal
+        sport={liveSport}
+        employees={employees}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          onChanged();
+          detailQuery.refetch();
+        }}
+      />
+    );
+  }
+
   return (
-    <Modal title={sport.name} onClose={onClose} size="lg"
-      footer={<>
-        <button onClick={() => { if (confirm('Delete this sport?')) remove.mutate(); }} className="btn-ghost text-danger hover:bg-danger-bg">Delete</button>
-        <button onClick={onClose} className="btn-ghost">Close</button>
-        <button onClick={() => setEditing(true)} className="btn-primary">Edit</button>
-      </>}>
+    <Modal
+      title={textOf(liveSport, ['activityName'])}
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button onClick={() => { if (confirm('Delete this sports activity?')) remove.mutate(); }} disabled={remove.isPending} className="btn-ghost text-danger hover:bg-danger-bg">Delete</button>
+          <button onClick={onClose} className="btn-ghost">Close</button>
+          <button onClick={() => setEditing(true)} className="btn-primary">Edit</button>
+        </>
+      }
+    >
       <div className="flex items-center gap-4">
-        <div className="h-14 w-14 rounded-2xl text-white grid place-items-center" style={{ background: `linear-gradient(135deg, ${sport.colorA}, ${sport.colorB})` }}><Icon name="sports"/></div>
+        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-info-bg text-info"><Icon name="sports" size={24} /></div>
         <div>
-          <h3 className="font-display text-xl font-semibold">{sport.name}</h3>
-          <p className="text-sm text-ink-500">Coach: {sport.coach} · {sport.players} players</p>
+          <h3 className="font-display text-xl font-semibold">{textOf(liveSport, ['activityName'])}</h3>
+          <p className="text-sm text-ink-500">Instructor: {instructorName(liveSport.instructorId, employees)}</p>
+          <p className="mt-1 text-xs text-ink-400">Activity ID {idOf(liveSport)}</p>
         </div>
       </div>
-      <hr className="border-line my-5"/>
-      <h4 className="label">Assign player</h4>
-      <div className="mt-3 flex gap-2">
-        <input className="input" placeholder="Student ID" value={studentId} onChange={(e) => setStudentId(e.target.value)}/>
-        <button onClick={() => assign.mutate()} disabled={!studentId || assign.isPending} className="btn-primary">{assign.isPending ? 'Adding…' : 'Assign'}</button>
+
+      <hr className="my-5 border-line" />
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div>
+          <label className="label">Assign student</label>
+          <select className="input mt-2" value={studentId} onChange={(event) => setStudentId(event.target.value)}>
+            <option value="">Select student</option>
+            {students.map((student) => (
+              <option key={student.id} value={student.id}>{student.firstName} {student.lastName} · {student.status}</option>
+            ))}
+          </select>
+        </div>
+        <button onClick={() => assign.mutate()} disabled={assign.isPending || !studentId} className="btn-primary self-end">
+          {assign.isPending ? 'Assigning...' : 'Assign'}
+        </button>
       </div>
-      <hr className="border-line my-5"/>
-      <h4 className="label">Roster</h4>
-      <div className="mt-3 grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-        {Array.from({ length: Math.min(sport.players ?? 6, 12) }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-full bg-brand-gradient text-white text-xs grid place-items-center font-semibold">P{i+1}</div>
-              <span className="text-sm">Player {i+1}</span>
-            </div>
-            <button onClick={() => Sports.unassign(sport.id, { studentId: 'demo' }).then(() => toast.success('Removed'))} className="text-xs text-danger hover:underline">Remove</button>
-          </div>
-        ))}
+
+      <div className="mt-5">
+        <h4 className="label">Assigned students</h4>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {assigned.map((item) => {
+            const assignedId = idOf(item) || String(item);
+            const student = students.find((candidate) => candidate.id === assignedId);
+            return (
+              <div key={assignedId} className="flex items-center justify-between rounded-xl bg-muted/40 p-3">
+                <div>
+                  <p className="font-semibold text-ink-900">{student ? `${student.firstName} ${student.lastName}` : fullName(item, compactId(assignedId))}</p>
+                  <p className="text-xs text-ink-400">{assignedId}</p>
+                </div>
+                <button onClick={() => unassign.mutate(assignedId)} disabled={unassign.isPending} className="btn-ghost px-2 py-1 text-xs text-danger hover:bg-danger-bg">Remove</button>
+              </div>
+            );
+          })}
+          {!assigned.length && <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-400 sm:col-span-2">No students assigned to this activity yet.</p>}
+        </div>
       </div>
     </Modal>
+  );
+}
+
+function instructorName(instructor: any, employees: HREmployee[]) {
+  const instructorId = idOf(instructor);
+  if (instructorId) {
+    const employee = employees.find((item) => item.userId === instructorId || item.id === instructorId);
+    if (employee) return `${employee.firstName || employee.username || employee.email} ${employee.lastName || ''}`.trim();
+  }
+  return fullName(instructor, instructorId ? compactId(instructorId) : 'Not assigned');
+}
+
+function Stat({ label, value, tone }: { label: string; value: string | number; tone: string }) {
+  return (
+    <div className="stat-card">
+      <p className="label">{label}</p>
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <p className="font-display text-3xl font-bold">{value}</p>
+        <span className={tone}>live</span>
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input className="input mt-2" value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
   );
 }

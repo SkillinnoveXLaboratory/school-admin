@@ -1,168 +1,238 @@
+import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { Area, AreaChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Icon } from '@/components/Icon';
-import { Analytics } from '@/lib/api/services';
+import { Analytics, Communication, Fees } from '@/lib/api/services';
 import { useAuthStore } from '@/lib/stores/auth';
+import { formatDate, isRecord, money, rowsFrom, textOf } from '@/lib/viewUtils';
 
-const COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#0EA5E9', '#EF4444', '#8B5CF6'];
+type Tone = 'brand' | 'info' | 'success' | 'warning';
 
 export function DashboardPage() {
   const { user } = useAuthStore();
-  const { data, isLoading, error } = useQuery<any>({
-    queryKey: ['school-dashboard'],
-    queryFn: () => Analytics.schoolDashboard(),
-  });
+  const dashboardQuery = useQuery({ queryKey: ['school-dashboard'], queryFn: () => Analytics.schoolDashboard() });
+  const cashQuery = useQuery({ queryKey: ['daily-cash'], queryFn: () => Fees.dailyCashLedger({ date: new Date().toISOString().slice(0, 10) }) });
+  const invoicesQuery = useQuery({ queryKey: ['invoices', 'dashboard'], queryFn: () => Fees.invoices.list({ page: 1, limit: 8 }) });
+  const announcementsQuery = useQuery({ queryKey: ['announcements', 'dashboard'], queryFn: () => Communication.announcements.list({ page: 1, limit: 4 }) });
+  const meetingsQuery = useQuery({ queryKey: ['meetings', 'dashboard'], queryFn: () => Communication.meetings.list({ status: 'SCHEDULED' }) });
 
-  const kpis = data?.kpis ?? FALLBACK.kpis;
-  const trend = data?.trend ?? FALLBACK.trend;
-  const attendance = data?.attendance ?? FALLBACK.attendance;
-  const collections = data?.collections ?? FALLBACK.collections;
+  const stats = isRecord(dashboardQuery.data?.statistics) ? dashboardQuery.data.statistics : {};
+  const cashSummary = isRecord(cashQuery.data?.summary) ? cashQuery.data.summary : {};
+  const invoices = rowsFrom<any>(invoicesQuery.data, ['invoices', 'data']);
+  const cashRows = rowsFrom<any>(cashQuery.data, ['invoices', 'data']);
+  const announcements = rowsFrom<any>(announcementsQuery.data, ['announcements', 'data']);
+  const meetings = rowsFrom<any>(meetingsQuery.data, ['meetings', 'data']);
+
+  const chartRows = useMemo(() => {
+    const byDay = new Map<string, number>();
+    for (const invoice of invoices) {
+      const date = textOf(invoice, ['createdAt'], '');
+      const key = date ? new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Unknown';
+      byDay.set(key, (byDay.get(key) ?? 0) + Number(invoice.amountPaid ?? 0));
+    }
+    if (!byDay.size && cashRows.length) {
+      for (const row of cashRows) {
+        const date = textOf(row, ['createdAt'], '');
+        const key = date ? new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Today';
+        byDay.set(key, (byDay.get(key) ?? 0) + Number(row.amountPaid ?? 0));
+      }
+    }
+    return [...byDay.entries()].map(([label, cash]) => ({ label, cash }));
+  }, [cashRows, invoices]);
+
+  const cards: Array<{ label: string; value: string | number; sub: string; icon: string; tone: Tone }> = [
+    { label: 'Students', value: textOf(stats, ['totalStudents'], '0'), sub: 'total enrollment', icon: 'students', tone: 'brand' },
+    { label: 'Teachers', value: textOf(stats, ['totalTeachers'], '0'), sub: 'live staff count', icon: 'teacher', tone: 'success' },
+    { label: 'Classes', value: textOf(stats, ['totalClasses'], '0'), sub: 'academic levels', icon: 'school', tone: 'info' },
+    { label: 'Cash today', value: money(cashSummary.totalCollected ?? 0), sub: `${cashSummary.transactionCount ?? 0} transactions`, icon: 'finance', tone: 'warning' },
+  ];
 
   return (
-    <div className="space-y-8">
-      <header>
+    <div className="space-y-6">
+      <header className="rounded-3xl border border-line bg-gradient-to-br from-surface via-white to-brand-50/40 p-5 sm:p-6">
         <p className="label">School overview</p>
-        <h1 className="font-display text-[32px] font-bold tracking-tight mt-1">
-          {greeting()}, {user?.firstName ?? 'there'}.
+        <h1 className="font-display text-[28px] sm:text-[32px] font-bold tracking-tight mt-1">
+          {greeting()}, {user?.firstName ?? 'Admin'}.
         </h1>
-        <p className="text-ink-500 mt-1.5">Here's how your school is doing today.</p>
+        <p className="text-ink-500 mt-1.5 text-sm">Live operational snapshot from the Schoolmate API.</p>
       </header>
 
-      {error && (
+      {dashboardQuery.error && (
         <div className="card border-warning bg-warning-bg/30 p-4 text-warning text-sm">
-          Couldn't reach the API. Showing sample values. <span className="opacity-70">({String(error)})</span>
+          Could not load dashboard statistics. {String(dashboardQuery.error)}
         </div>
       )}
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {[
-          { label: 'Enrolled students', value: kpis.students, sub: `${kpis.newAdmissions} new this month`, icon: 'students', tone: 'brand'   },
-          { label: 'Today\'s attendance', value: `${kpis.attendancePct}%`, sub: `${kpis.absent} absent`, icon: 'attendance', tone: 'success' },
-          { label: 'Outstanding fees', value: `₹${(kpis.outstanding/1000).toFixed(1)}K`, sub: `${kpis.invoicesDue} invoices due`, icon: 'finance', tone: 'warning' },
-          { label: 'Staff on duty', value: kpis.staffOnDuty, sub: `${kpis.staffTotal} total`, icon: 'teacher', tone: 'info' },
-        ].map((s, i) => (
-          <motion.div key={s.label} className="stat-card"
-            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05, duration: 0.3, ease: [0.2, 0, 0, 1] }}>
-            <div className="flex items-start justify-between">
-              <p className="label">{s.label}</p>
-              <div className={`h-9 w-9 rounded-xl grid place-items-center ${toneBg(s.tone)}`}>
-                <Icon name={s.icon as any} size={18} className={toneText(s.tone)} />
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        {cards.map((card, index) => (
+          <motion.div
+            key={card.label}
+            className="stat-card"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.04 }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <p className="label">{card.label}</p>
+              <div className={`h-9 w-9 rounded-xl grid place-items-center ${toneBg(card.tone)}`}>
+                <Icon name={card.icon as any} size={18} className={toneText(card.tone)} />
               </div>
             </div>
-            <div className="mt-3 font-display text-[30px] font-bold tracking-tight">
-              {isLoading ? <span className="inline-block w-16 h-7 bg-muted rounded-md animate-pulse" /> : s.value}
+            <div className="mt-3 font-display text-[28px] font-bold tracking-tight">
+              {dashboardQuery.isLoading ? <span className="inline-block h-8 w-16 rounded bg-muted animate-pulse" /> : card.value}
             </div>
-            <p className="text-xs text-ink-400 mt-1">{s.sub}</p>
+            <p className="text-xs text-ink-400 mt-1">{card.sub}</p>
           </motion.div>
         ))}
       </section>
 
-      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="card p-6 xl:col-span-2">
-          <h2 className="font-display text-lg font-semibold">Fee collections</h2>
-          <p className="text-xs text-ink-400">Last 8 weeks · cash + invoices</p>
+      <section className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+        <div className="card p-4 sm:p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-display text-lg font-semibold">Cash collection</h2>
+              <p className="text-xs text-ink-400">Built from `/fees/invoices` and daily cash ledger.</p>
+            </div>
+            <Link to="/fees" className="btn-outline w-full justify-center px-3 py-2 text-xs sm:w-auto">Open fees</Link>
+          </div>
           <div className="h-64 mt-4">
-            <ResponsiveContainer>
-              <AreaChart data={trend}>
-                <defs>
-                  <linearGradient id="d-cash" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#4F46E5" stopOpacity={0.4}/><stop offset="100%" stopColor="#4F46E5" stopOpacity={0}/></linearGradient>
-                  <linearGradient id="d-inv"  x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#10B981" stopOpacity={0.32}/><stop offset="100%" stopColor="#10B981" stopOpacity={0}/></linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 6" stroke="#E2E8F0" vertical={false}/>
-                <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke="#94A3B8" />
-                <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#94A3B8" />
-                <Tooltip contentStyle={{ border: '1px solid #E2E8F0', borderRadius: 12, fontSize: 12 }} />
-                <Area type="monotone" dataKey="cash"    name="Cash"     stroke="#4F46E5" strokeWidth={2.5} fill="url(#d-cash)" />
-                <Area type="monotone" dataKey="invoice" name="Invoices" stroke="#10B981" strokeWidth={2.5} fill="url(#d-inv)"  />
-              </AreaChart>
-            </ResponsiveContainer>
+            {chartRows.length ? (
+              <ResponsiveContainer>
+                <AreaChart data={chartRows}>
+                  <defs>
+                    <linearGradient id="cashFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#0EA5E9" stopOpacity={0.34} />
+                      <stop offset="100%" stopColor="#0EA5E9" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 6" stroke="#E2E8F0" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke="#64748B" />
+                  <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#64748B" />
+                  <Tooltip formatter={(value) => money(value)} contentStyle={{ border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12 }} />
+                  <Area type="monotone" dataKey="cash" name="Cash" stroke="#0EA5E9" strokeWidth={2.5} fill="url(#cashFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center rounded-2xl border border-dashed border-line text-sm text-ink-400">
+                No invoice cash data returned yet.
+              </div>
+            )}
           </div>
         </div>
-        <div className="card p-6">
-          <h2 className="font-display text-lg font-semibold">Attendance breakdown</h2>
-          <p className="text-xs text-ink-400">Today</p>
-          <div className="h-56 mt-2">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={attendance} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={2}>
-                  {attendance.map((_:any, i:number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie>
-                <Tooltip contentStyle={{ border: '1px solid #E2E8F0', borderRadius: 12, fontSize: 12 }} />
-                <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
-            </ResponsiveContainer>
+
+        <div className="card p-4 sm:p-5">
+          <h2 className="font-display text-lg font-semibold">Platform modules</h2>
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <MiniMetric label="Routes" value={textOf(stats, ['totalTransportRoutes'], '0')} />
+            <MiniMetric label="Library books" value={textOf(stats, ['totalLibraryBooks'], '0')} />
+            <MiniMetric label="Invoices" value={textOf(invoicesQuery.data?.meta, ['total'], String(invoices.length))} />
+            <MiniMetric label="Meetings" value={meetings.length} />
           </div>
         </div>
       </section>
 
-      <section className="grid lg:grid-cols-2 gap-6">
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-lg font-semibold">Today's collections</h2>
-            <a href="/fees" className="text-sm text-brand-600 font-medium">Open ledger →</a>
-          </div>
-          <table className="w-full mt-4">
-            <thead className="text-left text-ink-400">
-              <tr className="text-[11px] uppercase tracking-wider">
-                <th className="pb-2">Receipt</th><th>Student</th><th>Class</th><th className="text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {collections.map((c:any) => (
-                <tr key={c.id} className="border-t border-line/60 text-sm">
-                  <td className="py-3 font-mono text-xs">{c.id}</td>
-                  <td>{c.student}</td>
-                  <td className="text-ink-500">{c.class}</td>
-                  <td className="text-right font-semibold">₹{c.amount.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="card p-6">
-          <h2 className="font-display text-lg font-semibold">Quick actions</h2>
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <QA to="/students"     icon="upload"       label="Bulk import students" />
-            <QA to="/attendance"   icon="attendance"   label="Mark today's attendance" />
-            <QA to="/fees"         icon="finance"      label="Collect cash payment" />
-            <QA to="/announcements"icon="announcement" label="Send circular" />
-            <QA to="/exams"        icon="exam"         label="Publish report cards" />
-            <QA to="/library"      icon="library"      label="Issue library book" />
-          </div>
-        </div>
+      <section className="grid gap-5 lg:grid-cols-2">
+        <LivePanel title="Recent invoices" action={<Link to="/fees" className="text-xs font-semibold text-brand-600">View all</Link>}>
+          {invoices.map((invoice) => (
+            <div key={textOf(invoice, ['_id', 'id', 'invoiceNumber'])} className="flex items-center justify-between gap-3 border-t border-line/60 py-3 first:border-t-0">
+              <div className="min-w-0">
+                <p className="font-semibold text-sm truncate">{textOf(invoice, ['invoiceNumber'])}</p>
+                <p className="text-xs text-ink-400 truncate">{textOf(invoice, ['studentName'], textOf(invoice, ['studentId']))}</p>
+              </div>
+              <p className="font-semibold text-sm">{money(invoice.amountPaid)}</p>
+            </div>
+          ))}
+          {!invoices.length && <EmptyLine text="No invoices returned." />}
+        </LivePanel>
+
+        <LivePanel title="Announcements and meetings" action={<Link to="/announcements" className="text-xs font-semibold text-brand-600">Open</Link>}>
+          {announcements.slice(0, 2).map((item) => (
+            <div key={textOf(item, ['_id', 'id', 'title'])} className="border-t border-line/60 py-3 first:border-t-0">
+              <p className="font-semibold text-sm truncate">{textOf(item, ['title'])}</p>
+              <p className="text-xs text-ink-400 mt-0.5 truncate">{formatDate(textOf(item, ['createdAt'], ''))}</p>
+            </div>
+          ))}
+          {meetings.slice(0, 2).map((meeting) => (
+            <div key={textOf(meeting, ['_id', 'id', 'agenda'])} className="border-t border-line/60 py-3 first:border-t-0">
+              <p className="font-semibold text-sm truncate">{textOf(meeting, ['agenda'])}</p>
+              <p className="text-xs text-ink-400 mt-0.5">{formatDate(textOf(meeting, ['meetingDate'], ''))}</p>
+            </div>
+          ))}
+          {!announcements.length && !meetings.length && <EmptyLine text="No communication rows returned." />}
+        </LivePanel>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <QA to="/students" icon="students" label="Students" />
+        <QA to="/attendance" icon="attendance" label="Attendance" />
+        <QA to="/fees" icon="finance" label="Fees" />
+        <QA to="/sports" icon="sports" label="Sports" />
+        <QA to="/announcements" icon="announcement" label="Circulars" />
+        <QA to="/analytics" icon="dashboard" label="Analytics" />
       </section>
     </div>
   );
 }
 
+function LivePanel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="card p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-display text-lg font-semibold">{title}</h2>
+        {action}
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-xl bg-muted/50 p-3">
+      <p className="label">{label}</p>
+      <p className="mt-1 font-display text-xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function EmptyLine({ text }: { text: string }) {
+  return <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-400">{text}</p>;
+}
+
 function QA({ icon, label, to }: { icon: any; label: string; to: string }) {
   return (
-    <Link to={to} className="p-4 rounded-xl border border-line bg-surface text-left hover:border-brand-300 hover:bg-brand-50 transition-colors block">
-      <div className="h-9 w-9 rounded-lg bg-brand-50 grid place-items-center text-brand-600 mb-3"><Icon name={icon}/></div>
+    <Link to={to} className="rounded-2xl border border-line bg-surface p-4 text-left transition-colors hover:border-brand-300 hover:bg-brand-50">
+      <div className="h-9 w-9 rounded-lg bg-brand-50 grid place-items-center text-brand-600 mb-3">
+        <Icon name={icon} />
+      </div>
       <div className="text-[13px] font-semibold">{label}</div>
     </Link>
   );
 }
-function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
-function toneBg(t: any) { return ({brand:'bg-brand-50',info:'bg-info-bg',success:'bg-success-bg',warning:'bg-warning-bg'})[t]; }
-function toneText(t: any) { return ({brand:'text-brand-600',info:'text-info',success:'text-success',warning:'text-warning'})[t]; }
 
-const FALLBACK = {
-  kpis: { students: 1142, newAdmissions: 38, attendancePct: 94, absent: 68, outstanding: 412_000, invoicesDue: 27, staffOnDuty: 82, staffTotal: 92 },
-  trend: ['W-7','W-6','W-5','W-4','W-3','W-2','W-1','Now'].map((l,i)=>({ label: l, cash: 60+i*7+Math.round(Math.random()*15), invoice: 80+i*6+Math.round(Math.random()*12) })),
-  attendance: [
-    { name: 'Present', value: 1052 },
-    { name: 'Absent',  value:   68 },
-    { name: 'Leave',   value:   22 },
-  ],
-  collections: [
-    { id: 'RC-3401', student: 'Aanya Sharma',     class: 'Gr 6 · A', amount: 12000 },
-    { id: 'RC-3402', student: 'Rohit Kumar',      class: 'Gr 8 · B', amount:  9500 },
-    { id: 'RC-3403', student: 'Pranavi Reddy',    class: 'Gr 5 · C', amount: 11000 },
-    { id: 'RC-3404', student: 'Imran Ahmed',      class: 'Gr 9 · A', amount: 13500 },
-    { id: 'RC-3405', student: 'Sasha Mathew',     class: 'Gr 4 · D', amount:  8000 },
-  ],
-};
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+function toneBg(t: Tone) {
+  const tones: Record<Tone, string> = {
+    brand: 'bg-brand-50',
+    info: 'bg-info-bg',
+    success: 'bg-success-bg',
+    warning: 'bg-warning-bg',
+  };
+  return tones[t];
+}
+
+function toneText(t: Tone) {
+  const tones: Record<Tone, string> = {
+    brand: 'text-brand-600',
+    info: 'text-info',
+    success: 'text-success',
+    warning: 'text-warning',
+  };
+  return tones[t];
+}

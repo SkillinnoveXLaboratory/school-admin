@@ -1,159 +1,614 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import clsx from 'clsx';
 import { PageHeader } from '@/components/PageHeader';
 import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
-import { Library } from '@/lib/api/services';
-
-const BOOKS = [
-  { id: 'b1', title: 'Wings of Fire',            author: 'A.P.J. Abdul Kalam', isbn: '978-8173711466', copies: 12, available: 9,  category: 'Biography', colorA: '#F59E0B', colorB: '#EF4444' },
-  { id: 'b2', title: 'The Discovery of India',   author: 'Jawaharlal Nehru',   isbn: '978-0143031031', copies:  6, available: 2,  category: 'History',   colorA: '#0EA5E9', colorB: '#10B981' },
-  { id: 'b3', title: 'Train to Pakistan',        author: 'Khushwant Singh',    isbn: '978-0143065883', copies:  4, available: 0,  category: 'Fiction',   colorA: '#EF4444', colorB: '#7C3AED' },
-  { id: 'b4', title: 'Algebra & Trigonometry',   author: 'M.L. Khanna',        isbn: '978-8189652555', copies: 20, available: 14, category: 'Textbook',  colorA: '#10B981', colorB: '#0EA5E9' },
-  { id: 'b5', title: 'Physics — Concepts',       author: 'H.C. Verma',         isbn: '978-8177092325', copies: 18, available: 11, category: 'Textbook',  colorA: '#7C3AED', colorB: '#EC4899' },
-];
+import { Library, Students } from '@/lib/api/services';
+import type { Student } from '@/lib/api/types';
+import { compactId, formatDate, fullName, idOf, inputDate, isRecord, money, numberValue, rowsFrom, statusClass, textOf } from '@/lib/viewUtils';
 
 export function LibraryPage() {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
-  const [active, setActive] = useState<any>(null);
-  const [issueOpen, setIssueOpen] = useState(false);
-  const { data = [] } = useQuery<any[]>({ queryKey: ['books', q], queryFn: () => Library.books.list({ q }) as any });
-  const rows = data.length ? data : BOOKS;
+  const [issuing, setIssuing] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [activeBook, setActiveBook] = useState<any>(null);
+
+  const booksQuery = useQuery({
+    queryKey: ['library-books', q],
+    queryFn: () => Library.books.list({ q, page: 1, limit: 50 }),
+  });
+  const issuesQuery = useQuery({
+    queryKey: ['library-issues'],
+    queryFn: () => Library.issues.list({ page: 1, limit: 50 }),
+  });
+  const overdueQuery = useQuery({
+    queryKey: ['library-overdue'],
+    queryFn: () => Library.issues.overdue({ page: 1, limit: 50 }),
+  });
+  const studentsQuery = useQuery({
+    queryKey: ['students', 'library'],
+    queryFn: () => Students.list({ page: 1, limit: 100 }),
+  });
+
+  const books = rowsFrom<any>(booksQuery.data, ['books', 'data']);
+  const issues = rowsFrom<any>(issuesQuery.data, ['issues', 'data']);
+  const overdue = rowsFrom<any>(overdueQuery.data, ['issues', 'data']);
+  const students = studentsQuery.data?.students ?? [];
+  const availableBooks = books.filter((book) => textOf(book, ['status'], '').toUpperCase() === 'AVAILABLE');
+  const issuedIssues = issues.filter((issue) => textOf(issue, ['status'], '').toUpperCase() === 'ISSUED');
+  const catalogMeta = isRecord(booksQuery.data?.meta) ? booksQuery.data?.meta : {};
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['library-books'] });
+    qc.invalidateQueries({ queryKey: ['library-issues'] });
+    qc.invalidateQueries({ queryKey: ['library-overdue'] });
+  };
+
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Module 11" title="Library"
-        subtitle="Catalog, issues, returns, and overdue fines."
-        actions={<>
-          <button onClick={() => setIssueOpen(true)} className="btn-outline"><Icon name="download" size={16}/> Issue book</button>
-          <button onClick={() => setAdding(true)} className="btn-primary"><Icon name="plus" size={16}/> Add book</button>
-        </>} />
+      <PageHeader
+        eyebrow="Module 11"
+        title="Library"
+        subtitle="Live catalog, barcode checkout, returns, overdue tracking, and fine settlement."
+        actions={
+          <>
+            <button onClick={() => setReturning(true)} className="btn-outline"><Icon name="upload" size={16} /> Return</button>
+            <button onClick={() => setIssuing(true)} className="btn-outline"><Icon name="download" size={16} /> Issue</button>
+            <button onClick={() => setAdding(true)} className="btn-primary"><Icon name="plus" size={16} /> Add book</button>
+          </>
+        }
+      />
 
-      <div className="card p-4 flex gap-3 items-center">
-        <div className="relative flex-1">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Catalog books" value={textOf(catalogMeta, ['total'], String(books.length))} tone="chip-brand" />
+        <Stat label="Available copies" value={availableBooks.length} tone="chip-success" />
+        <Stat label="Issued books" value={issuedIssues.length} tone="chip-warning" />
+        <Stat label="Overdue" value={overdue.length} tone={overdue.length ? 'chip-danger' : 'chip-success'} />
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-2">
+        <Panel title="Active issues" subtitle="Current checkout transactions">
+          {issuedIssues.map((issue) => <IssueCard key={idOf(issue)} issue={issue} />)}
+          {!issuedIssues.length && <EmptyLine text="No currently issued books." />}
+        </Panel>
+
+        <Panel title="Overdue / fines" subtitle="Returned by `/library/issues/overdue`">
+          {overdue.map((issue) => <FineCard key={idOf(issue)} issue={issue} onPaid={invalidate} />)}
+          {!overdue.length && <EmptyLine text="No overdue books right now." />}
+        </Panel>
+      </section>
+
+      <section className="card p-4">
+        <div className="relative">
           <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search title, author, ISBN…" className="input pl-9" />
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder="Search title, author, ISBN, barcode..."
+            className="input pl-9"
+          />
         </div>
-      </div>
+      </section>
 
-      <section className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {rows.map((b:any) => (
-          <article key={b.id} onClick={() => setActive(b)} className="card p-5 cursor-pointer hover:shadow-pop hover:border-brand-300 transition-all">
-            <div className="flex gap-4">
-              <div className="h-20 w-14 rounded-lg shadow-soft" style={{ background: `linear-gradient(135deg, ${b.colorA ?? '#4F46E5'} 0%, ${b.colorB ?? '#8B5CF6'} 100%)` }}/>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-display text-base font-semibold truncate">{b.title}</h3>
-                <p className="text-xs text-ink-500 mt-0.5">{b.author}</p>
-                <p className="text-[11px] text-ink-400 mt-2 font-mono">{b.isbn}</p>
-                <div className="mt-3 flex items-center justify-between text-xs">
-                  <span className="text-ink-500">{b.available}/{b.copies} available</span>
-                  {(b.available ?? 1) > 0 ? <span className="chip-success">Available</span> : <span className="chip-warning">All out</span>}
-                </div>
-              </div>
-            </div>
-          </article>
-        ))}
+      <section className="card overflow-hidden">
+        <div className="overflow-hidden">
+          <div className="border-b border-line p-4">
+            <h2 className="font-display text-lg font-semibold">Book catalog</h2>
+            <p className="text-sm text-ink-500">Loaded from `/library/books`.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px]">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="table-header">Book</th>
+                  <th className="table-header">Barcode</th>
+                  <th className="table-header">Rack</th>
+                  <th className="table-header">Fine/day</th>
+                  <th className="table-header">Status</th>
+                  <th className="table-header text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {books.map((book) => (
+                  <tr key={idOf(book)} className="hover:bg-muted/40">
+                    <td className="table-cell">
+                      <div className="flex items-center gap-3">
+                        <BookCover title={textOf(book, ['title'], 'Book')} />
+                        <div>
+                          <p className="font-semibold text-ink-900">{textOf(book, ['title'])}</p>
+                          <p className="text-xs text-ink-500">{textOf(book, ['author'])} · {textOf(book, ['category'], 'Uncategorised')}</p>
+                          <p className="mt-0.5 font-mono text-[11px] text-ink-400">{textOf(book, ['isbn'])}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="table-cell font-mono text-xs">{textOf(book, ['barcode'])}</td>
+                    <td className="table-cell">{textOf(book, ['rackLocation'])}</td>
+                    <td className="table-cell">{money(textOf(book, ['finePerDay'], '0'))}</td>
+                    <td className="table-cell"><span className={statusClass(textOf(book, ['status'], ''))}>{textOf(book, ['status'])}</span></td>
+                    <td className="table-cell text-right">
+                      <button onClick={() => setActiveBook(book)} className="btn-ghost px-3 py-1.5 text-xs">Manage</button>
+                    </td>
+                  </tr>
+                ))}
+                {!books.length && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-sm text-ink-400">
+                      {booksQuery.isLoading ? 'Loading catalog...' : 'No books returned by the API.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </section>
 
       <AnimatePresence>
-        {adding && <BookFormModal onClose={() => setAdding(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['books'] }); setAdding(false); }}/>}
-        {active && (
-          <BookDetailModal book={active} onClose={() => setActive(null)}
-            onIssue={() => { setIssueOpen(true); setActive(null); }}
-            onEdited={() => { qc.invalidateQueries({ queryKey: ['books'] }); setActive(null); }}
-            onRemoved={() => { qc.invalidateQueries({ queryKey: ['books'] }); setActive(null); }}/>
-        )}
-        {issueOpen && <IssueModal onClose={() => setIssueOpen(false)}/>}
+        {adding && <BookFormModal onClose={() => setAdding(false)} onSaved={() => { setAdding(false); invalidate(); }} />}
+        {activeBook && <BookManagerModal book={activeBook} onClose={() => setActiveBook(null)} onChanged={() => { setActiveBook(null); invalidate(); }} />}
+        {issuing && <IssueModal books={availableBooks} students={students} onClose={() => setIssuing(false)} onSaved={() => { setIssuing(false); invalidate(); }} />}
+        {returning && <ReturnModal issues={issuedIssues} onClose={() => setReturning(false)} onSaved={() => { setReturning(false); invalidate(); }} />}
       </AnimatePresence>
     </div>
   );
 }
 
-function BookFormModal({ book, onClose, onSaved }: { book?: any; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState({
-    title: book?.title ?? '', author: book?.author ?? '', isbn: book?.isbn ?? '',
-    category: book?.category ?? 'Textbook', copies: book?.copies ?? 1,
+function BookFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    title: '',
+    author: '',
+    isbn: '',
+    barcode: '',
+    category: '',
+    rackLocation: '',
+    finePerDay: '2',
   });
   const save = useMutation({
-    mutationFn: () => book ? Library.books.update(book.id, f) : Library.books.create(f),
-    onSuccess: () => { toast.success(book ? 'Book updated' : 'Book added'); onSaved(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+    mutationFn: () => Library.books.create({ ...form, finePerDay: numberValue(form.finePerDay, 0) }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book added');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to add book'),
   });
+
   return (
-    <Modal title={book ? `Edit ${book.title}` : 'Add book'} onClose={onClose}
-      footer={<>
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => save.mutate()} disabled={save.isPending || !f.title} className="btn-primary">{save.isPending ? 'Saving…' : 'Save'}</button>
-      </>}>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Title" value={f.title} onChange={v => setF({ ...f, title: v })}/>
-        <Field label="Author" value={f.author} onChange={v => setF({ ...f, author: v })}/>
-        <Field label="ISBN" value={f.isbn} onChange={v => setF({ ...f, isbn: v })}/>
-        <Field label="Category" value={f.category} onChange={v => setF({ ...f, category: v })}/>
-        <Field label="Copies" type="number" value={String(f.copies)} onChange={v => setF({ ...f, copies: Number(v) })}/>
+    <Modal
+      title="Add book copy"
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => save.mutate()} disabled={save.isPending || !form.title || !form.barcode} className="btn-primary">
+            {save.isPending ? 'Saving...' : 'Save book'}
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input label="Title" value={form.title} onChange={(title) => setForm({ ...form, title })} />
+        <Input label="Author" value={form.author} onChange={(author) => setForm({ ...form, author })} />
+        <Input label="ISBN" value={form.isbn} onChange={(isbn) => setForm({ ...form, isbn })} />
+        <Input label="Barcode" value={form.barcode} onChange={(barcode) => setForm({ ...form, barcode })} />
+        <Input label="Category" value={form.category} onChange={(category) => setForm({ ...form, category })} />
+        <Input label="Rack location" value={form.rackLocation} onChange={(rackLocation) => setForm({ ...form, rackLocation })} />
+        <Input label="Fine per day" type="number" value={form.finePerDay} onChange={(finePerDay) => setForm({ ...form, finePerDay })} />
       </div>
     </Modal>
   );
 }
 
-function BookDetailModal({ book, onClose, onIssue, onEdited, onRemoved }: { book: any; onClose: () => void; onIssue: () => void; onEdited: () => void; onRemoved: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const remove = useMutation({
-    mutationFn: () => Library.books.remove(book.id),
-    onSuccess: () => { toast.success('Removed'); onRemoved(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+function BookManageModal({ book, onClose, onChanged }: { book: any; onClose: () => void; onChanged: () => void }) {
+  const [rackLocation, setRackLocation] = useState(textOf(book, ['rackLocation'], ''));
+  const [status, setStatus] = useState(textOf(book, ['status'], 'AVAILABLE'));
+  const update = useMutation({
+    mutationFn: () => Library.books.update(idOf(book), { rackLocation, status }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book updated');
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to update book'),
   });
-  if (editing) return <BookFormModal book={book} onClose={() => setEditing(false)} onSaved={onEdited}/>;
+  const remove = useMutation({
+    mutationFn: () => Library.books.remove(idOf(book)),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book removed');
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to remove book'),
+  });
+
   return (
-    <Modal title={book.title} onClose={onClose}
-      footer={<>
-        <button onClick={() => { if (confirm('Remove from catalog?')) remove.mutate(); }}
-          className="btn-ghost text-danger hover:bg-danger-bg">Remove</button>
-        <button onClick={onClose} className="btn-ghost">Close</button>
-        <button onClick={() => setEditing(true)} className="btn-outline">Edit</button>
-        <button onClick={onIssue} className="btn-primary"><Icon name="download" size={14}/> Issue copy</button>
-      </>}>
-      <div className="flex gap-4">
-        <div className="h-32 w-24 rounded-lg shadow-soft" style={{ background: `linear-gradient(135deg, ${book.colorA ?? '#4F46E5'} 0%, ${book.colorB ?? '#8B5CF6'} 100%)` }}/>
+    <Modal
+      title={textOf(book, ['title'])}
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button onClick={() => { if (confirm('Remove this book copy from catalog?')) remove.mutate(); }} disabled={remove.isPending} className="btn-ghost text-danger hover:bg-danger-bg">Remove</button>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => update.mutate()} disabled={update.isPending || !rackLocation} className="btn-primary">
+            {update.isPending ? 'Saving...' : 'Save changes'}
+          </button>
+        </>
+      }
+    >
+      <div className="flex items-start gap-4">
+        <BookCover title={textOf(book, ['title'], 'Book')} large />
+        <div className="min-w-0">
+          <p className="font-semibold text-ink-900">{textOf(book, ['author'])}</p>
+          <p className="mt-1 font-mono text-xs text-ink-400">{textOf(book, ['barcode'])}</p>
+          <p className="mt-1 text-xs text-ink-500">{textOf(book, ['isbn'])} · {compactId(book)}</p>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <Input label="Rack location" value={rackLocation} onChange={setRackLocation} />
         <div>
-          <h3 className="font-display text-xl font-semibold">{book.title}</h3>
-          <p className="text-sm text-ink-500">{book.author}</p>
-          <p className="text-xs text-ink-400 font-mono mt-2">{book.isbn}</p>
-          <div className="mt-3 flex gap-1.5">
-            <span className="chip-brand">{book.category ?? 'Textbook'}</span>
-            <span className="chip-success">{book.available}/{book.copies} available</span>
-          </div>
+          <label className="label">Status</label>
+          <select className="input mt-2" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="AVAILABLE">AVAILABLE</option>
+            <option value="ISSUED">ISSUED</option>
+            <option value="DAMAGED">DAMAGED</option>
+            <option value="LOST">LOST</option>
+          </select>
         </div>
       </div>
     </Modal>
   );
 }
 
-function IssueModal({ onClose }: { onClose: () => void }) {
-  const [bookId, setBookId] = useState('');
-  const [studentId, setStudentId] = useState('');
-  const issue = useMutation({
-    mutationFn: () => Library.issue({ bookId, studentId }),
-    onSuccess: () => { toast.success('Book issued'); onClose(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
+function BookManagerModal({ book, onClose, onChanged }: { book: any; onClose: () => void; onChanged: () => void }) {
+  const title = textOf(book, ['title'], 'Book copy');
+  const author = textOf(book, ['author'], 'Unknown author');
+  const category = textOf(book, ['category'], 'Uncategorised');
+  const isbn = textOf(book, ['isbn'], '—');
+  const barcode = textOf(book, ['barcode'], '—');
+  const rack = textOf(book, ['rackLocation'], 'Not assigned');
+  const statusValue = textOf(book, ['status'], 'AVAILABLE');
+  const finePerDay = money(textOf(book, ['finePerDay'], '0'));
+  const copyId = compactId(book);
+  const [rackLocation, setRackLocation] = useState(rack);
+  const [status, setStatus] = useState(statusValue);
+
+  const update = useMutation({
+    mutationFn: () => Library.books.update(idOf(book), { rackLocation, status }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book updated');
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to update book'),
   });
+
+  const remove = useMutation({
+    mutationFn: () => Library.books.remove(idOf(book)),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book removed');
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to remove book'),
+  });
+
   return (
-    <Modal title="Issue book" onClose={onClose}
-      footer={<>
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={() => issue.mutate()} disabled={issue.isPending || !bookId || !studentId} className="btn-primary">{issue.isPending ? 'Issuing…' : 'Issue'}</button>
-      </>}>
-      <Field label="Book ID" value={bookId} onChange={setBookId}/>
-      <div className="mt-3"><Field label="Student ID" value={studentId} onChange={setStudentId}/></div>
-      <p className="text-xs text-ink-400 mt-3">Due date is set automatically based on category (default 14 days).</p>
+    <Modal
+      title={`Manage ${title}`}
+      onClose={onClose}
+      size="full"
+      closeLabel="Back to library"
+    >
+      <div className="space-y-5">
+        <section className="rounded-[2rem] border border-line bg-gradient-to-br from-brand-50 via-white to-canvas p-5 sm:p-6 shadow-soft">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex items-start gap-4 min-w-0">
+              <BookCover title={title} large />
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-brand-600 font-bold">Library copy</p>
+                <h3 className="mt-2 text-2xl sm:text-3xl font-display font-semibold text-ink-900 break-words">{title}</h3>
+                <p className="mt-2 text-sm text-ink-600">{author}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="chip-brand">{category}</span>
+                  <span className={statusClass(statusValue)}>{statusValue}</span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2 text-xs text-ink-500">
+                  <span className="chip-brand">Barcode: {barcode}</span>
+                  <span className="chip-brand">ISBN: {isbn}</span>
+                  <span className="chip-brand">Copy ID: {copyId}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 w-full xl:w-[360px]">
+              <BookInfo label="Rack" value={rack} />
+              <BookInfo label="Fine / day" value={finePerDay} />
+              <BookInfo label="Status" value={statusValue} />
+              <BookInfo label="Barcode" value={barcode} mono />
+            </div>
+          </div>
+        </section>
+
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)]">
+          <section className="rounded-[2rem] border border-line bg-surface p-4 sm:p-5 shadow-soft">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Book details</p>
+                <h4 className="mt-1 text-lg font-semibold text-ink-900">Read-only summary</h4>
+              </div>
+              <span className="chip-brand">{statusValue}</span>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <BookInfo label="Title" value={title} />
+              <BookInfo label="Author" value={author} />
+              <BookInfo label="Category" value={category} />
+              <BookInfo label="ISBN" value={isbn} mono />
+              <BookInfo label="Barcode" value={barcode} mono />
+              <BookInfo label="Rack location" value={rack} />
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-ink-400 font-bold">Copy metrics</p>
+                  <p className="mt-1 text-sm text-ink-500">Keep the book facts visible while you edit the shelf location and status.</p>
+                </div>
+                <span className="chip-brand">{finePerDay} / day</span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <BookInfo label="Copy ID" value={copyId} mono />
+                <BookInfo label="Current status" value={statusValue} />
+              </div>
+            </div>
+          </section>
+
+          <aside className="space-y-4">
+            <section className="rounded-[2rem] border border-line bg-surface p-4 sm:p-5 shadow-soft">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Edit copy</p>
+              <div className="mt-4 space-y-3">
+                <Input label="Rack location" value={rackLocation} onChange={setRackLocation} />
+                <div>
+                  <label className="label">Status</label>
+                  <select className="input mt-2" value={status} onChange={(event) => setStatus(event.target.value)}>
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="ISSUED">ISSUED</option>
+                    <option value="DAMAGED">DAMAGED</option>
+                    <option value="LOST">LOST</option>
+                  </select>
+                </div>
+                <p className="text-xs text-ink-400">
+                  The copy keeps its identity. This form only updates the rack location and live status.
+                </p>
+              </div>
+            </section>
+
+            <section className="rounded-[2rem] border border-line bg-brand-50/40 p-4 sm:p-5">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Actions</p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    if (confirm('Remove this book copy from catalog?')) remove.mutate();
+                  }}
+                  disabled={remove.isPending}
+                  className="btn-ghost text-danger hover:bg-danger-bg w-full"
+                >
+                  {remove.isPending ? 'Removing...' : 'Remove book'}
+                </button>
+                <button onClick={onClose} className="btn-ghost w-full">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => update.mutate()}
+                  disabled={update.isPending || !rackLocation}
+                  className="btn-primary w-full"
+                >
+                  {update.isPending ? 'Saving...' : 'Save changes'}
+                </button>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
     </Modal>
   );
 }
 
-function Field({ label, value, onChange, type='text' }: { label: string; value: string; onChange: (v: string)=>void; type?: string }) {
-  return <div><label className="label">{label}</label>
-    <input type={type} value={value} onChange={e => onChange(e.target.value)} className="input mt-2"/></div>;
+function IssueModal({ books, students, onClose, onSaved }: { books: any[]; students: Student[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    barcode: books[0] ? textOf(books[0], ['barcode'], '') : '',
+    studentId: students[0]?.id ?? '',
+    dueDate: inputDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)),
+  });
+  const issue = useMutation({
+    mutationFn: () => Library.issue(form),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book issued');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to issue book'),
+  });
+
+  return (
+    <Modal
+      title="Issue book by barcode"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => issue.mutate()} disabled={issue.isPending || !form.barcode || !form.studentId || !form.dueDate} className="btn-primary">
+            {issue.isPending ? 'Issuing...' : 'Issue book'}
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="label">Book barcode</label>
+          <select className="input mt-2" value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })}>
+            <option value="">Select available book</option>
+            {books.map((book) => (
+              <option key={idOf(book)} value={textOf(book, ['barcode'], '')}>{textOf(book, ['title'])} · {textOf(book, ['barcode'])}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Student</label>
+          <select className="input mt-2" value={form.studentId} onChange={(event) => setForm({ ...form, studentId: event.target.value })}>
+            <option value="">Select student</option>
+            {students.map((student) => (
+              <option key={student.id} value={student.id}>{student.firstName} {student.lastName}</option>
+            ))}
+          </select>
+        </div>
+        <Input label="Due date" type="date" value={form.dueDate} onChange={(dueDate) => setForm({ ...form, dueDate })} />
+      </div>
+    </Modal>
+  );
+}
+
+function ReturnModal({ issues, onClose, onSaved }: { issues: any[]; onClose: () => void; onSaved: () => void }) {
+  const [barcode, setBarcode] = useState(issues[0] ? textOf(issues[0].bookId, ['barcode'], '') : '');
+  const returnBook = useMutation({
+    mutationFn: () => Library.return({ barcode }),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Book returned');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to return book'),
+  });
+
+  return (
+    <Modal
+      title="Return book"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={() => returnBook.mutate()} disabled={returnBook.isPending || !barcode} className="btn-primary">
+            {returnBook.isPending ? 'Returning...' : 'Return book'}
+          </button>
+        </>
+      }
+    >
+      <label className="label">Issued barcode</label>
+      <select className="input mt-2" value={barcode} onChange={(event) => setBarcode(event.target.value)}>
+        <option value="">Select issued book</option>
+        {issues.map((issue) => (
+          <option key={idOf(issue)} value={textOf(issue.bookId, ['barcode'], '')}>
+            {textOf(issue.bookId, ['title'])} · {textOf(issue.bookId, ['barcode'])} · {fullName(issue.studentId)}
+          </option>
+        ))}
+      </select>
+      <p className="mt-3 text-xs text-ink-400">The API calculates overdue fine automatically during return.</p>
+    </Modal>
+  );
+}
+
+function IssueCard({ issue }: { issue: any }) {
+  return (
+    <div className="rounded-xl border border-line bg-muted/30 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-ink-900">{textOf(issue.bookId, ['title'], 'Book')}</p>
+          <p className="text-xs text-ink-500">{fullName(issue.studentId, compactId(issue.studentId))}</p>
+        </div>
+        <span className={statusClass(textOf(issue, ['status'], ''))}>{textOf(issue, ['status'])}</span>
+      </div>
+      <p className="mt-2 text-xs text-ink-400">Due {formatDate(textOf(issue, ['dueDate'], ''))} · {textOf(issue.bookId, ['barcode'], 'barcode')}</p>
+    </div>
+  );
+}
+
+function FineCard({ issue, onPaid }: { issue: any; onPaid: () => void }) {
+  const pay = useMutation({
+    mutationFn: () => Library.fines.pay(idOf(issue)),
+    onSuccess: (body: any) => {
+      toast.success(body?.message || 'Fine paid');
+      onPaid();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to settle fine'),
+  });
+  const fine = numberValue(issue.fineAmount, 0);
+  const paid = Boolean(issue.finePaid);
+
+  return (
+    <div className="rounded-xl border border-line bg-danger-bg/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-ink-900">{textOf(issue.bookId, ['title'], 'Book')}</p>
+          <p className="text-xs text-ink-500">{fullName(issue.studentId, compactId(issue.studentId))} · {money(fine)}</p>
+        </div>
+        <span className={paid ? 'chip-success' : 'chip-danger'}>{paid ? 'Paid' : 'Due'}</span>
+      </div>
+      {!paid && fine > 0 && (
+        <button onClick={() => pay.mutate()} disabled={pay.isPending} className="btn-outline mt-3 px-3 py-1.5 text-xs">
+          {pay.isPending ? 'Settling...' : 'Settle fine'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+  return (
+    <div className="card p-4">
+      <h2 className="font-display text-lg font-semibold">{title}</h2>
+      <p className="text-sm text-ink-500">{subtitle}</p>
+      <div className="mt-4 space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string | number; tone: string }) {
+  return (
+    <div className="stat-card">
+      <p className="label">{label}</p>
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <p className="font-display text-3xl font-bold">{value}</p>
+        <span className={tone}>live</span>
+      </div>
+    </div>
+  );
+}
+
+function BookCover({ title, large = false }: { title: string; large?: boolean }) {
+  const seed = title.length % 5;
+  const gradients = [
+    'from-brand-500 to-info',
+    'from-success to-info',
+    'from-warning to-danger',
+    'from-ink-700 to-brand-500',
+    'from-danger to-brand-600',
+  ];
+  return (
+    <div className={clsx('shrink-0 rounded-lg bg-gradient-to-br shadow-soft', gradients[seed], large ? 'h-28 w-20' : 'h-14 w-10')} />
+  );
+}
+
+function BookInfo({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-2xl border border-line bg-canvas p-3">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-ink-400 font-bold">{label}</p>
+      <p className={clsx('mt-1 break-words text-sm font-semibold text-ink-900', mono && 'font-mono text-xs')}>
+        {value || '—'}
+      </p>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input type={type} className="input mt-2" value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function EmptyLine({ text }: { text: string }) {
+  return <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-400">{text}</p>;
 }

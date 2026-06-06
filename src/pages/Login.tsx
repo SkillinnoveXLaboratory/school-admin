@@ -8,13 +8,14 @@ import { Lottie } from '@/components/Lottie';
 import { Auth } from '@/lib/api/services';
 import { useAuthStore } from '@/lib/stores/auth';
 
+const LAST_LOGIN_USER_KEY = 'schoolmate-admin-last-login-user';
+
 export function LoginPage() {
   const { token, loginSuccess, setActiveSchool } = useAuthStore();
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [schoolId, setSchoolId] = useState('');
 
   if (token) return <Navigate to="/" replace />;
 
@@ -22,10 +23,10 @@ export function LoginPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      if (schoolId) setActiveSchool(schoolId);
-      const { token, refreshToken, user } = await Auth.login({ username, password });
+      const { token, refreshToken, user } = await Auth.login({ email, password });
       if (user.schoolId) setActiveSchool(user.schoolId);
-      loginSuccess(token, refreshToken, user, user.schoolId);
+      window.localStorage.setItem(LAST_LOGIN_USER_KEY, JSON.stringify(user));
+      loginSuccess(token, refreshToken, user, user.schoolId ?? null);
       toast.success(`Welcome, ${user.firstName}`);
       navigate('/', { replace: true });
     } catch (err: any) {
@@ -67,13 +68,8 @@ export function LoginPage() {
           <p className="text-ink-500 mt-2 text-sm">School Admin console.</p>
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
             <div>
-              <label className="label">School code</label>
-              <input className="input mt-2" value={schoolId} onChange={e=>setSchoolId(e.target.value)} placeholder="e.g. greenwood" />
-              <p className="text-[11px] text-ink-400 mt-1.5">Short identifier from your welcome email. Auto-detected after first sign-in.</p>
-            </div>
-            <div>
-              <label className="label">Username</label>
-              <input className="input mt-2" autoFocus required value={username} onChange={e=>setUsername(e.target.value)} placeholder="principal_jane" />
+              <label className="label">Email</label>
+              <input className="input mt-2" type="email" autoFocus required value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@schoolmate.com" />
             </div>
             <div>
               <label className="label">Password</label>

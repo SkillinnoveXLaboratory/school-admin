@@ -14,7 +14,7 @@ export function PageHeader({ eyebrow, title, subtitle, actions }: Props) {
         <h1 className="font-display text-[28px] font-bold tracking-tight mt-1">{title}</h1>
         {subtitle && <p className="text-ink-500 mt-1 text-sm">{subtitle}</p>}
       </div>
-      <div className="flex gap-2">{actions}</div>
+      <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">{actions}</div>
     </header>
   );
 }
