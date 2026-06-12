@@ -34,6 +34,7 @@ export interface User {
   email: string;
   phone: string;
   profileImageUrl?: string;
+  schoolName?: string;
   role: Role;
   schoolId: ID | null;
   status: 'ACTIVE' | 'INACTIVE';

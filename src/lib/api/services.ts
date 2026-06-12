@@ -58,6 +58,7 @@ function firstString(...values: unknown[]): string {
 
 function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
   const user = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const school = (user.school && typeof user.school === 'object' ? user.school : {}) as Record<string, unknown>;
   const phone = firstString(user.phone, user.phoneNumber, user.mobile, user.contactPhone, user.contact_phone);
   const profileImageUrl = firstString(
     user.profileImageUrl,
@@ -70,6 +71,7 @@ function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
     user.imageUrl,
     user.image_url,
   );
+  const schoolName = firstString(user.schoolName, user.school_name, school.name, school.schoolName);
 
   return {
     id: firstString(user.id, user._id),
@@ -79,6 +81,7 @@ function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
     email: firstString(user.email),
     phone: phone || '',
     profileImageUrl: profileImageUrl || undefined,
+    schoolName: schoolName || undefined,
     role: firstString(user.role).toUpperCase() as LoginResponse['user']['role'],
     schoolId: firstString(user.schoolId, user.school_id) || null,
     status: (firstString(user.status).toUpperCase() || 'ACTIVE') as LoginResponse['user']['status'],

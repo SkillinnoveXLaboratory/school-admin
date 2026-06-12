@@ -37,6 +37,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const schoolName = user?.schoolName || 'School';
 
   const groups = useMemo(
     () =>
@@ -154,8 +155,8 @@ export function AppShell() {
             </button>
 
             <div className="sm:hidden flex-1">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-ink-400 font-semibold">Schoolmate</div>
-              <div className="text-sm font-semibold text-ink-900">Admin console</div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-ink-400 font-semibold">School</div>
+              <div className="text-sm font-semibold text-ink-900 truncate">{schoolName}</div>
             </div>
 
             <div className="flex-1" />
@@ -171,7 +172,7 @@ export function AppShell() {
                   {user?.firstName} {user?.lastName}
                 </div>
                 <div className="text-[11px] text-ink-400 uppercase tracking-wider">
-                  {user?.role.replace('_', ' ')}
+                  {schoolName}
                 </div>
               </div>
               <div className="h-10 w-10 overflow-hidden rounded-full bg-brand-gradient text-white grid place-items-center font-semibold text-sm shadow-pop-30">

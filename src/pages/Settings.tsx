@@ -109,6 +109,7 @@ export function SettingsPage() {
   }
 
   const displayName = fullName(account, 'Account');
+  const schoolName = account.schoolName || 'School';
   const initials = [account.firstName?.[0], account.lastName?.[0]]
     .filter(Boolean)
     .join('')
@@ -169,7 +170,7 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="You"
         title="Settings"
-        subtitle="Manage your admin account and the active school tenant settings from one place."
+        subtitle={`Manage your admin account for ${schoolName}.`}
       />
 
       <section className="rounded-[28px] border border-brand-100 bg-gradient-to-br from-brand-50 via-white to-canvas p-5 shadow-soft sm:p-6">
@@ -191,7 +192,7 @@ export function SettingsPage() {
               </p>
             </div>
           </div>
-          <span className="chip-brand w-fit self-start lg:self-center">Admin account</span>
+          <span className="chip-brand w-fit self-start lg:self-center">{schoolName}</span>
         </div>
       </section>
 
