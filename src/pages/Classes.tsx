@@ -19,6 +19,7 @@ export function ClassesPage() {
   const [latestSubject, setLatestSubject] = useState<AcademicSubject | null>(null);
   const [subjectName, setSubjectName] = useState('');
   const [subjectCode, setSubjectCode] = useState('');
+  const [subjectDetailsId, setSubjectDetailsId] = useState('');
   const [linkClassId, setLinkClassId] = useState('');
   const [linkSectionId, setLinkSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
@@ -39,6 +40,13 @@ export function ClassesPage() {
 
   const classes = classesQuery.data?.classes ?? [];
   const subjects = subjectsQuery.data?.subjects ?? [];
+  const subjectDetailsQuery = useQuery({
+    queryKey: ['subject-detail', subjectDetailsId],
+    queryFn: () => Academic.subjects.get(subjectDetailsId),
+    enabled: view === 'subjects' && Boolean(subjectDetailsId),
+    staleTime: 5 * 60 * 1000,
+  });
+  const subjectDetails = subjectDetailsQuery.data?.subject ?? subjectDetailsQuery.data?.data ?? null;
   const teacherEmployees = useMemo(
     () => (staffQuery.data?.employees ?? []).filter((employee) => employee.role?.toUpperCase() === 'TEACHER'),
     [staffQuery.data?.employees],
@@ -121,6 +129,74 @@ export function ClassesPage() {
     },
     onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to link subject'),
   });
+
+  const deleteSubjectMut = useMutation({
+    mutationFn: (id: string) => Academic.subjects.remove(id),
+    onSuccess: (res, deletedId) => {
+      toast.success(res.message || 'Subject deleted');
+      qc.invalidateQueries({ queryKey: ['subjects'] });
+      if (subjectDetailsId === deletedId) setSubjectDetailsId('');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to delete subject'),
+  });
+
+  const toggleSubjectMut = useMutation({
+    mutationFn: (payload: { id: string; isActive: boolean }) => Academic.subjects.toggleStatus(payload.id, { isActive: payload.isActive }),
+    onSuccess: (res, payload) => {
+      toast.success(res.message || 'Subject status toggled');
+      qc.invalidateQueries({ queryKey: ['subjects'] });
+      if (subjectDetailsId === payload.id && (res.subject ?? res.data)) setSubjectDetailsId(payload.id);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to toggle subject status'),
+  });
+
+  const deleteClassMut = useMutation({
+    mutationFn: (classId: string) => Academic.classes.remove(classId),
+    onSuccess: (res) => {
+      toast.success(res.message || 'Class deleted');
+      qc.invalidateQueries({ queryKey: ['classes'] });
+      if (open?.id) setOpen(null);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to delete class'),
+  });
+
+  const toggleClassMut = useMutation({
+    mutationFn: (payload: { id: string; isActive: boolean }) => Academic.classes.toggleStatus(payload.id, { isActive: payload.isActive }),
+    onSuccess: (res, payload) => {
+      toast.success(res.message || 'Class status toggled');
+      qc.invalidateQueries({ queryKey: ['classes'] });
+      if (open?.id === payload.id && res.class) setOpen(res.class);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to toggle class status'),
+  });
+
+  function openSubjectDetails(id: string) {
+    setSubjectDetailsId(id);
+  }
+
+  function requestDeleteSubject(id: string, label: string) {
+    const ok = window.confirm(`Delete subject "${label}"? This cannot be undone.`);
+    if (!ok) return;
+    deleteSubjectMut.mutate(id);
+  }
+
+  function requestToggleSubject(subject: AcademicSubject | null) {
+    if (!subject?.id) return;
+    const isActive = subjectStatusLabel(subject) === 'ACTIVE';
+    toggleSubjectMut.mutate({ id: subject.id, isActive: !isActive });
+  }
+
+  function requestDeleteClass(classId: string, label: string) {
+    const ok = window.confirm(`Delete class "${label}"? This will remove the class and its sections.`);
+    if (!ok) return;
+    deleteClassMut.mutate(classId);
+  }
+
+  function requestToggleClass(cls: AcademicClass | null) {
+    if (!cls?.id) return;
+    const isActive = classStatusLabel(cls) === 'ACTIVE';
+    toggleClassMut.mutate({ id: cls.id, isActive: !isActive });
+  }
 
   return (
     <div className="space-y-6">
@@ -221,6 +297,7 @@ export function ClassesPage() {
                 <thead className="bg-muted/60">
                   <tr>
                     <Th>Class</Th>
+                    <Th>Status</Th>
                     <Th>Sections</Th>
                     <Th>Teacher-linked</Th>
                     <Th>Updated</Th>
@@ -244,6 +321,9 @@ export function ClassesPage() {
                         </div>
                       </Td>
                       <Td>
+                        <span className={classStatusClass(cls)}>{classStatusLabel(cls)}</span>
+                      </Td>
+                      <Td>
                         <div className="flex flex-wrap gap-1.5">
                           {(cls.sections ?? []).length > 0
                             ? cls.sections.map((section) => (
@@ -257,9 +337,31 @@ export function ClassesPage() {
                       <Td>{countTeacherLinked(cls)}</Td>
                       <Td className="text-ink-500 text-xs">{formatDate(cls.updatedAt)}</Td>
                       <Td className="text-right pr-6">
-                        <button onClick={(e) => { e.stopPropagation(); setOpen(cls); }} className="btn-ghost py-1.5 px-3 text-xs">
-                          Manage
-                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={(e) => { e.stopPropagation(); setOpen(cls); }} className="btn-ghost py-1.5 px-3 text-xs">
+                            Manage
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestToggleClass(cls);
+                            }}
+                            disabled={toggleClassMut.isPending}
+                            className="btn-outline py-1.5 px-3 text-xs"
+                          >
+                            {toggleClassMut.isPending ? 'Updating...' : classStatusLabel(cls) === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestDeleteClass(cls.id, cls.name);
+                            }}
+                            disabled={deleteClassMut.isPending}
+                            className="btn-danger py-1.5 px-3 text-xs"
+                          >
+                            {deleteClassMut.isPending ? 'Deleting...' : 'Delete'}
+                          </button>
+                        </div>
                       </Td>
                     </tr>
                   ))}
@@ -296,7 +398,21 @@ export function ClassesPage() {
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs text-ink-500">
                     <span>{(cls.sections ?? []).length} sections</span>
-                    <span>{countTeacherLinked(cls)}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={classStatusClass(cls)}>{classStatusLabel(cls)}</span>
+                      <span>{countTeacherLinked(cls)}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          requestDeleteClass(cls.id, cls.name);
+                        }}
+                        disabled={deleteClassMut.isPending}
+                        className="btn-danger px-2.5 py-1 text-[11px]"
+                      >
+                        {deleteClassMut.isPending ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
                   </div>
                 </button>
               ))}
@@ -328,6 +444,11 @@ export function ClassesPage() {
           setTeacherId={setTeacherId}
           onLinkSubject={() => linkSubjectMut.mutate()}
           linkPending={linkSubjectMut.isPending}
+          onViewSubject={openSubjectDetails}
+          onDeleteSubject={requestDeleteSubject}
+          onToggleSubject={requestToggleSubject}
+          deletePendingId={deleteSubjectMut.variables ?? ''}
+          togglePendingId={toggleSubjectMut.variables?.id ?? ''}
         />
       )}
 
@@ -352,6 +473,17 @@ export function ClassesPage() {
               qc.invalidateQueries({ queryKey: ['classes'] });
               if (updated) setOpen(updated);
             }}
+            />
+        )}
+        {subjectDetailsId && (
+          <SubjectDetailModal
+            subject={subjectDetails}
+            loading={subjectDetailsQuery.isLoading}
+            onClose={() => setSubjectDetailsId('')}
+            onDelete={() => requestDeleteSubject(subjectDetailsId, subjectDetails?.subjectName || compactId(subjectDetailsId))}
+            onToggle={() => requestToggleSubject(subjectDetails)}
+            deleting={deleteSubjectMut.isPending && deleteSubjectMut.variables === subjectDetailsId}
+            toggling={toggleSubjectMut.isPending && toggleSubjectMut.variables?.id === subjectDetailsId}
           />
         )}
       </AnimatePresence>
@@ -614,6 +746,17 @@ function ClassManagerModal({
   const [viewingSectionId, setViewingSectionId] = useState<string | null>(cls.sections?.[0]?.id ?? null);
   const [addSectionOpen, setAddSectionOpen] = useState(false);
   const sections = cls.sections ?? [];
+  const handleToggleClass = () => {
+    toggleClassMut.mutate({ id: cls.id, isActive: classStatusLabel(cls) !== 'ACTIVE' });
+  };
+  const toggleClassMut = useMutation({
+    mutationFn: (payload: { id: string; isActive: boolean }) => Academic.classes.toggleStatus(payload.id, { isActive: payload.isActive }),
+    onSuccess: (res) => {
+      toast.success(res.message || 'Class status toggled');
+      if (res.class) onChanged(res.class);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to toggle class status'),
+  });
 
   useEffect(() => {
     setViewingSectionId(cls.sections?.[0]?.id ?? null);
@@ -637,6 +780,17 @@ function ClassManagerModal({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleToggleClass}
+                  disabled={toggleClassMut.isPending}
+                  className="btn-outline w-full sm:w-auto"
+                >
+                  {toggleClassMut.isPending
+                    ? 'Updating...'
+                    : classStatusLabel(cls) === 'ACTIVE'
+                      ? 'Deactivate class'
+                      : 'Activate class'}
+                </button>
                 <button onClick={() => setAddSectionOpen(true)} className="btn-primary w-full sm:w-auto">
                   <Icon name="plus" size={16} /> Add section
                 </button>
@@ -968,6 +1122,11 @@ function SubjectsPanel({
   setTeacherId,
   onLinkSubject,
   linkPending,
+  onViewSubject,
+  onDeleteSubject,
+  onToggleSubject,
+  deletePendingId,
+  togglePendingId,
   teacherOptions,
 }: {
   classes: AcademicClass[];
@@ -990,6 +1149,11 @@ function SubjectsPanel({
   setTeacherId: (value: string) => void;
   onLinkSubject: () => void;
   linkPending: boolean;
+  onViewSubject: (subjectId: string) => void;
+  onDeleteSubject: (subjectId: string, label: string) => void;
+  onToggleSubject: (subject: AcademicSubject) => void;
+  deletePendingId: string;
+  togglePendingId: string;
 }) {
   const selectedClass = classes.find((cls) => cls.id === linkClassId);
   const sectionOptions = selectedClass?.sections ?? [];
@@ -1095,7 +1259,7 @@ function SubjectsPanel({
                 <option value="">Select subject</option>
                 {subjects.map((subject) => (
                   <option key={subject.id} value={subject.id}>
-                    {subject.subjectName} ({subject.subjectCode}) - {subject.id}
+                    {subject.subjectName} ({subject.subjectCode})
                   </option>
                 ))}
               </select>
@@ -1156,7 +1320,216 @@ function SubjectsPanel({
           </p>
         </div>
       </div>
+
+      <div className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Catalog table</p>
+            <h4 className="mt-1 font-display text-lg font-semibold">All live subjects</h4>
+          </div>
+          <div className="text-xs text-ink-500">
+            Total subjects: <span className="font-semibold text-ink-900">{subjects.length}</span>
+          </div>
+        </div>
+
+        <div className="mt-4 hidden lg:block overflow-x-auto rounded-2xl border border-line">
+          <table className="w-full min-w-[760px]">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <Th>Subject</Th>
+                    <Th>Code</Th>
+                    <Th>Status</Th>
+                    <Th>Updated</Th>
+                    <Th className="text-right pr-6">Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subjects.map((subject) => (
+                <tr key={subject.id} className="hover:bg-muted/40 transition-colors">
+                  <Td>
+                    <div className="font-semibold text-ink-900">{subject.subjectName}</div>
+                    <div className="text-xs text-ink-400 font-mono">{subject.id}</div>
+                  </Td>
+                  <Td className="text-sm text-ink-600">{subject.subjectCode}</Td>
+                  <Td>
+                    <span className={subjectStatusClass(subject)}>{subjectStatusLabel(subject)}</span>
+                  </Td>
+                  <Td className="text-sm text-ink-500">{formatDate(subject.updatedAt)}</Td>
+                  <Td className="pr-6">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onViewSubject(subject.id)}
+                        className="btn-ghost text-xs px-3 py-2"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onToggleSubject(subject)}
+                        disabled={togglePendingId === subject.id}
+                        className="btn-outline text-xs px-3 py-2"
+                      >
+                        {togglePendingId === subject.id ? 'Updating...' : subjectStatusLabel(subject) === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteSubject(subject.id, subject.subjectName)}
+                        disabled={deletePendingId === subject.id}
+                        className="btn-danger text-xs px-3 py-2"
+                      >
+                        {deletePendingId === subject.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+              {subjects.length === 0 && (
+                <tr>
+                  <Td className="py-8 text-center text-ink-500" colSpan={5}>
+                    No subjects found.
+                  </Td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:hidden">
+          {subjects.map((subject) => (
+            <article key={subject.id} className="rounded-2xl border border-line bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-ink-900">{subject.subjectName}</div>
+                  <div className="mt-1 text-xs text-ink-400 font-mono break-all">{subject.id}</div>
+                </div>
+                <span className={clsx('shrink-0', subjectStatusClass(subject))}>
+                  {subjectStatusLabel(subject)}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm text-ink-600">
+                <span>Code: {subject.subjectCode}</span>
+                <span>Updated: {formatDate(subject.updatedAt)}</span>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onViewSubject(subject.id)}
+                  className="btn-ghost text-xs px-3 py-2"
+                >
+                  View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleSubject(subject)}
+                  disabled={togglePendingId === subject.id}
+                  className="btn-outline text-xs px-3 py-2"
+                >
+                  {togglePendingId === subject.id ? 'Updating...' : subjectStatusLabel(subject) === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteSubject(subject.id, subject.subjectName)}
+                  disabled={deletePendingId === subject.id}
+                  className="btn-danger text-xs px-3 py-2"
+                >
+                  {deletePendingId === subject.id ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </article>
+          ))}
+          {subjects.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-line bg-white/70 p-4 text-sm text-ink-500">
+              No subjects found.
+            </div>
+          )}
+        </div>
+      </div>
     </section>
+  );
+}
+
+function SubjectDetailModal({
+  subject,
+  loading,
+  onClose,
+  onDelete,
+  onToggle,
+  deleting,
+  toggling,
+}: {
+  subject: AcademicSubject | null;
+  loading: boolean;
+  onClose: () => void;
+  onDelete: () => void;
+  onToggle: () => void;
+  deleting: boolean;
+  toggling: boolean;
+}) {
+  return (
+    <Modal
+      title={subject?.subjectName || 'Subject details'}
+      onClose={onClose}
+      size="lg"
+      footer={(
+        <div className="flex w-full flex-col sm:flex-row sm:justify-end gap-2">
+          <button onClick={onClose} className="btn-ghost text-xs md:text-sm px-3 py-2 w-full sm:w-auto">Close</button>
+          <button
+            onClick={onToggle}
+            disabled={toggling}
+            className="btn-outline text-xs md:text-sm px-3 py-2 w-full sm:w-auto"
+          >
+            {toggling ? 'Updating...' : subject && (subject.isActive === false || subject.isDeleted) ? 'Activate subject' : 'Deactivate subject'}
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={deleting}
+            className="btn-danger text-xs md:text-sm px-3 py-2 w-full sm:w-auto"
+          >
+            {deleting ? 'Deleting...' : 'Delete subject'}
+          </button>
+        </div>
+      )}
+    >
+      {loading || !subject ? (
+        <div className="space-y-3">
+          <div className="h-24 rounded-2xl bg-muted/60 animate-pulse" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="h-20 rounded-2xl bg-muted/60 animate-pulse" />
+            <div className="h-20 rounded-2xl bg-muted/60 animate-pulse" />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <section className="rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-white to-canvas p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-brand-600 font-bold">Catalog subject</p>
+                <h3 className="mt-2 text-2xl font-display font-semibold">{subject.subjectName}</h3>
+                <p className="mt-1 text-sm text-ink-500 font-mono">{subject.id}</p>
+              </div>
+              <span className={subjectStatusClass(subject)}>{subjectStatusLabel(subject)}</span>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <MiniStat label="Subject code" value={subject.subjectCode} />
+              <MiniStat label="Updated" value={formatDate(subject.updatedAt)} />
+              <MiniStat label="Created" value={formatDate(subject.createdAt)} />
+              <MiniStat label="School" value={subject.schoolId || '—'} />
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-line bg-surface p-5 sm:p-6">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Details</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <MiniStat label="Description" value={subject.description || '—'} />
+              <MiniStat label="Deleted at" value={subject.deletedAt || '—'} />
+              <MiniStat label="Active" value={subject.isActive === undefined ? '—' : subject.isActive ? 'Yes' : 'No'} />
+              <MiniStat label="Deleted" value={subject.isDeleted === undefined ? '—' : subject.isDeleted ? 'Yes' : 'No'} />
+            </div>
+          </section>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1164,8 +1537,18 @@ function Th({ children, className = '' }: { children: ReactNode; className?: str
   return <th className={clsx('table-header', className)}>{children}</th>;
 }
 
-function Td({ children, className = '', mono = false }: { children: ReactNode; className?: string; mono?: boolean }) {
-  return <td className={clsx('table-cell', mono && 'font-mono text-xs', className)}>{children}</td>;
+function Td({
+  children,
+  className = '',
+  mono = false,
+  colSpan,
+}: {
+  children: ReactNode;
+  className?: string;
+  mono?: boolean;
+  colSpan?: number;
+}) {
+  return <td colSpan={colSpan} className={clsx('table-cell', mono && 'font-mono text-xs', className)}>{children}</td>;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
@@ -1189,6 +1572,30 @@ function formatDate(value?: string) {
   if (!value) return '—';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value.slice(0, 10) : d.toLocaleDateString();
+}
+
+function classStatusLabel(cls: AcademicClass) {
+  if (cls.isActive === false) return 'INACTIVE';
+  if (cls.status) return cls.status.toUpperCase();
+  return 'ACTIVE';
+}
+
+function classStatusClass(cls: AcademicClass) {
+  if (cls.isActive === false) return 'chip-warning';
+  if (cls.status && cls.status.toUpperCase() !== 'ACTIVE') return 'chip-warning';
+  return 'chip-brand';
+}
+
+function subjectStatusLabel(subject: AcademicSubject) {
+  if (subject.isDeleted) return 'DELETED';
+  if (subject.isActive === false) return 'INACTIVE';
+  return 'ACTIVE';
+}
+
+function subjectStatusClass(subject: AcademicSubject) {
+  if (subject.isDeleted) return 'chip-danger';
+  if (subject.isActive === false) return 'chip-warning';
+  return 'chip-brand';
 }
 
 function initials(name: string) {

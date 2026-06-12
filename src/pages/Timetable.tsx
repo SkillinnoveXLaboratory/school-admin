@@ -140,10 +140,12 @@ export function TimetablePage() {
                 <h3 className="mt-1 font-display text-base font-semibold">{subjectName(slot.subjectId)}</h3>
                 <p className="mt-1 text-sm text-ink-500">{resolveTeacherName(idOf(slot.teacherId), employees, teacherDirectory)}</p>
               </div>
-              <span className="chip-brand">{textOf(slot, ['startTime'])}-{textOf(slot, ['endTime'])}</span>
+                <div className="flex flex-col items-end gap-2">
+                  <span className="chip-brand">{textOf(slot, ['startTime'])}-{textOf(slot, ['endTime'])}</span>
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
       </section>
 
       <AnimatePresence>
@@ -309,6 +311,7 @@ function AddSlotModal({
   );
 }
 
+
 function SlotCard({ slot, tone, teacherLabel }: { slot: any; tone: string; teacherLabel: string }) {
   return (
     <div className={clsx('min-h-[82px] rounded-xl p-3 transition-all hover:scale-[1.01]', tone)}>
@@ -390,3 +393,4 @@ function Input({ label, value, onChange, type = 'text' }: { label: string; value
     </div>
   );
 }
+

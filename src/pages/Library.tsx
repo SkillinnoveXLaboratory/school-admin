@@ -6,16 +6,13 @@ import clsx from 'clsx';
 import { PageHeader } from '@/components/PageHeader';
 import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
-import { Library, Students } from '@/lib/api/services';
+import { Library } from '@/lib/api/services';
 import type { Student } from '@/lib/api/types';
 import { compactId, formatDate, fullName, idOf, inputDate, isRecord, money, numberValue, rowsFrom, statusClass, textOf } from '@/lib/viewUtils';
 
 export function LibraryPage() {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [issuing, setIssuing] = useState(false);
-  const [returning, setReturning] = useState(false);
   const [activeBook, setActiveBook] = useState<any>(null);
 
   const booksQuery = useQuery({
@@ -30,15 +27,9 @@ export function LibraryPage() {
     queryKey: ['library-overdue'],
     queryFn: () => Library.issues.overdue({ page: 1, limit: 50 }),
   });
-  const studentsQuery = useQuery({
-    queryKey: ['students', 'library'],
-    queryFn: () => Students.list({ page: 1, limit: 100 }),
-  });
-
   const books = rowsFrom<any>(booksQuery.data, ['books', 'data']);
   const issues = rowsFrom<any>(issuesQuery.data, ['issues', 'data']);
   const overdue = rowsFrom<any>(overdueQuery.data, ['issues', 'data']);
-  const students = studentsQuery.data?.students ?? [];
   const availableBooks = books.filter((book) => textOf(book, ['status'], '').toUpperCase() === 'AVAILABLE');
   const issuedIssues = issues.filter((issue) => textOf(issue, ['status'], '').toUpperCase() === 'ISSUED');
   const catalogMeta = isRecord(booksQuery.data?.meta) ? booksQuery.data?.meta : {};
@@ -55,13 +46,6 @@ export function LibraryPage() {
         eyebrow="Module 11"
         title="Library"
         subtitle="Live catalog, barcode checkout, returns, overdue tracking, and fine settlement."
-        actions={
-          <>
-            <button onClick={() => setReturning(true)} className="btn-outline"><Icon name="upload" size={16} /> Return</button>
-            <button onClick={() => setIssuing(true)} className="btn-outline"><Icon name="download" size={16} /> Issue</button>
-            <button onClick={() => setAdding(true)} className="btn-primary"><Icon name="plus" size={16} /> Add book</button>
-          </>
-        }
       />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -150,58 +134,9 @@ export function LibraryPage() {
       </section>
 
       <AnimatePresence>
-        {adding && <BookFormModal onClose={() => setAdding(false)} onSaved={() => { setAdding(false); invalidate(); }} />}
         {activeBook && <BookManagerModal book={activeBook} onClose={() => setActiveBook(null)} onChanged={() => { setActiveBook(null); invalidate(); }} />}
-        {issuing && <IssueModal books={availableBooks} students={students} onClose={() => setIssuing(false)} onSaved={() => { setIssuing(false); invalidate(); }} />}
-        {returning && <ReturnModal issues={issuedIssues} onClose={() => setReturning(false)} onSaved={() => { setReturning(false); invalidate(); }} />}
       </AnimatePresence>
     </div>
-  );
-}
-
-function BookFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({
-    title: '',
-    author: '',
-    isbn: '',
-    barcode: '',
-    category: '',
-    rackLocation: '',
-    finePerDay: '2',
-  });
-  const save = useMutation({
-    mutationFn: () => Library.books.create({ ...form, finePerDay: numberValue(form.finePerDay, 0) }),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Book added');
-      onSaved();
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to add book'),
-  });
-
-  return (
-    <Modal
-      title="Add book copy"
-      onClose={onClose}
-      size="lg"
-      footer={
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || !form.title || !form.barcode} className="btn-primary">
-            {save.isPending ? 'Saving...' : 'Save book'}
-          </button>
-        </>
-      }
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Title" value={form.title} onChange={(title) => setForm({ ...form, title })} />
-        <Input label="Author" value={form.author} onChange={(author) => setForm({ ...form, author })} />
-        <Input label="ISBN" value={form.isbn} onChange={(isbn) => setForm({ ...form, isbn })} />
-        <Input label="Barcode" value={form.barcode} onChange={(barcode) => setForm({ ...form, barcode })} />
-        <Input label="Category" value={form.category} onChange={(category) => setForm({ ...form, category })} />
-        <Input label="Rack location" value={form.rackLocation} onChange={(rackLocation) => setForm({ ...form, rackLocation })} />
-        <Input label="Fine per day" type="number" value={form.finePerDay} onChange={(finePerDay) => setForm({ ...form, finePerDay })} />
-      </div>
-    </Modal>
   );
 }
 
@@ -274,30 +209,10 @@ function BookManagerModal({ book, onClose, onChanged }: { book: any; onClose: ()
   const statusValue = textOf(book, ['status'], 'AVAILABLE');
   const finePerDay = money(textOf(book, ['finePerDay'], '0'));
   const copyId = compactId(book);
-  const [rackLocation, setRackLocation] = useState(rack);
-  const [status, setStatus] = useState(statusValue);
-
-  const update = useMutation({
-    mutationFn: () => Library.books.update(idOf(book), { rackLocation, status }),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Book updated');
-      onChanged();
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to update book'),
-  });
-
-  const remove = useMutation({
-    mutationFn: () => Library.books.remove(idOf(book)),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Book removed');
-      onChanged();
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to remove book'),
-  });
 
   return (
     <Modal
-      title={`Manage ${title}`}
+      title={`View ${title}`}
       onClose={onClose}
       size="full"
       closeLabel="Back to library"
@@ -365,52 +280,6 @@ function BookManagerModal({ book, onClose, onChanged }: { book: any; onClose: ()
               </div>
             </div>
           </section>
-
-          <aside className="space-y-4">
-            <section className="rounded-[2rem] border border-line bg-surface p-4 sm:p-5 shadow-soft">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Edit copy</p>
-              <div className="mt-4 space-y-3">
-                <Input label="Rack location" value={rackLocation} onChange={setRackLocation} />
-                <div>
-                  <label className="label">Status</label>
-                  <select className="input mt-2" value={status} onChange={(event) => setStatus(event.target.value)}>
-                    <option value="AVAILABLE">AVAILABLE</option>
-                    <option value="ISSUED">ISSUED</option>
-                    <option value="DAMAGED">DAMAGED</option>
-                    <option value="LOST">LOST</option>
-                  </select>
-                </div>
-                <p className="text-xs text-ink-400">
-                  The copy keeps its identity. This form only updates the rack location and live status.
-                </p>
-              </div>
-            </section>
-
-            <section className="rounded-[2rem] border border-line bg-brand-50/40 p-4 sm:p-5">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Actions</p>
-              <div className="mt-4 flex flex-col gap-2">
-                <button
-                  onClick={() => {
-                    if (confirm('Remove this book copy from catalog?')) remove.mutate();
-                  }}
-                  disabled={remove.isPending}
-                  className="btn-ghost text-danger hover:bg-danger-bg w-full"
-                >
-                  {remove.isPending ? 'Removing...' : 'Remove book'}
-                </button>
-                <button onClick={onClose} className="btn-ghost w-full">
-                  Cancel
-                </button>
-                <button
-                  onClick={() => update.mutate()}
-                  disabled={update.isPending || !rackLocation}
-                  className="btn-primary w-full"
-                >
-                  {update.isPending ? 'Saving...' : 'Save changes'}
-                </button>
-              </div>
-            </section>
-          </aside>
         </div>
       </div>
     </Modal>

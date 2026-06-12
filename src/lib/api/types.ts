@@ -33,9 +33,63 @@ export interface User {
   lastName: string;
   email: string;
   phone: string;
+  profileImageUrl?: string;
   role: Role;
   schoolId: ID | null;
   status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface TenantPrincipalInfo {
+  name?: string;
+  qualification?: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface TenantAcademicBoardInfo {
+  boardName?: string;
+  boardCode?: string;
+  affiliationStatus?: string;
+}
+
+export interface TenantAffiliationDetails {
+  affiliationNo?: string;
+  expiryDate?: string;
+  type?: string;
+}
+
+export interface TenantRegistrationNumbers {
+  schoolRegNo?: string;
+  trustRegNo?: string;
+}
+
+export interface TenantSettings {
+  id?: ID;
+  schoolId?: ID;
+  schoolName?: string;
+  principalInfo: TenantPrincipalInfo;
+  academicBoardInfo: TenantAcademicBoardInfo;
+  affiliationDetails?: TenantAffiliationDetails;
+  registrationNumbers?: TenantRegistrationNumbers;
+  enrollmentTypes?: string[];
+  bloodGroups?: string[];
+  genders?: string[];
+  employeeRoles?: string[];
+  examTerms?: string[];
+  libraryFinePerDay?: number;
+  maxBooksPerStudent?: number;
+  allowParentLogin?: boolean;
+  allowStudentLogin?: boolean;
+  schoolTheme?: string;
+  schoolLogoUrl?: string;
+  schoolWebsiteUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TenantSettingsUpdateInput {
+  principalInfo?: TenantPrincipalInfo;
+  academicBoardInfo?: TenantAcademicBoardInfo;
 }
 
 export interface Student {
@@ -54,8 +108,16 @@ export interface Student {
     fatherName?: string;
     motherName?: string;
     primaryPhone: string;
+    parentEmail?: string;
     email?: string;
     homeAddress: string;
+    address?: {
+      homeAddress?: string;
+      city?: string;
+      district?: string;
+      state?: string;
+      pincode?: string;
+    };
   };
   emergencyContact: string;
   status: 'ENROLLED' | 'GRADUATED' | 'TRANSFERRED' | 'DEENROLLED' | 'DE-ENROLLED' | 'INACTIVE';
@@ -96,9 +158,21 @@ export interface PaginatedStudentsResponse {
 
 export interface StudentIdCard {
   name: string;
+  fullName?: string;
+  schoolId?: ID;
+  studentId?: ID;
   enrollmentNumber: string;
-  className: string;
+  dateOfBirth?: string;
+  emergencyPhone?: string;
+  primaryPhone?: string;
+  className?: string;
   photoUrl?: string;
+  layout?: {
+    template?: string;
+    primaryColor?: string;
+    textColor?: string;
+    barcodeType?: string;
+  };
   qrCodeData: string;
 }
 
@@ -115,16 +189,53 @@ export interface StudentParentUpdate {
   fatherName?: string;
   motherName?: string;
   primaryPhone?: string;
+  parentEmail?: string;
   homeAddress?: string;
 }
 
-export type AdmissionStatus = 'APPLIED' | 'VERIFIED' | 'APPROVED' | 'ENROLLED' | 'REJECTED';
+export interface StudentBirthdayTriggerReport {
+  scannedCount?: number;
+  birthdayCount?: number;
+  notifiedCount?: number;
+  errors?: string[];
+}
+
+export interface StudentBirthdayTriggerResponse {
+  success?: boolean;
+  message?: string;
+  report?: StudentBirthdayTriggerReport;
+}
+
+export type AdmissionStatus = 'PENDING' | 'APPLIED' | 'VERIFIED' | 'APPROVED' | 'ENROLLED' | 'REJECTED';
 
 export interface AdmissionParentContact {
   fatherName?: string;
   motherName?: string;
   primaryPhone?: string;
+  secondaryPhone?: string;
+  guardianName?: string;
+  parentEmail?: string;
   homeAddress?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  pincode?: string;
+}
+
+export interface AdmissionAddress {
+  homeAddress?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  pincode?: string;
+}
+
+export interface AdmissionAcademicDetails {
+  classApplied?: string;
+  section?: string;
+  enrollmentType?: string;
+  previousSchool?: string;
+  lastGradeCompleted?: string;
 }
 
 export interface AdmissionDocument {
@@ -141,6 +252,26 @@ export interface AdmissionApplication {
   gender: 'MALE' | 'FEMALE' | 'OTHER';
   dateOfBirth: string;
   emergencyContact: string;
+  emergencyContactName?: string;
+  emergencyContactNo?: string;
+  aadharNo?: string;
+  bloodGroup?: string;
+  identificationMark?: string;
+  nationalId?: string;
+  guardianName?: string;
+  primaryContactNo?: string;
+  secondaryContactNo?: string;
+  primaryPhone?: string;
+  secondaryPhone?: string;
+  parentEmail?: string;
+  address?: AdmissionAddress;
+  academic?: AdmissionAcademicDetails;
+  enrollmentType?: string;
+  lastGradeCompleted?: string;
+  isParentSigned?: boolean;
+  isDeclarationSigned?: boolean;
+  classAppliedFor?: string;
+  previousSchoolName?: string;
   status: AdmissionStatus;
   parentContact: AdmissionParentContact;
   documents?: AdmissionDocument[];
@@ -168,6 +299,26 @@ export interface AdmissionApplyInput {
   gender: 'MALE' | 'FEMALE' | 'OTHER';
   dateOfBirth: string;
   emergencyContact: string;
+  emergencyContactName?: string;
+  emergencyContactNo?: string;
+  aadharNo?: string;
+  bloodGroup?: string;
+  identificationMark?: string;
+  nationalId?: string;
+  fatherName?: string;
+  motherName?: string;
+  guardianName?: string;
+  primaryPhone?: string;
+  secondaryPhone?: string;
+  parentEmail?: string;
+  primaryContactNo?: string;
+  secondaryContactNo?: string;
+  address?: AdmissionAddress;
+  academic?: AdmissionAcademicDetails;
+  isParentSigned?: boolean;
+  isDeclarationSigned?: boolean;
+  classAppliedFor?: string;
+  previousSchoolName?: string;
   parentContact: AdmissionParentContact;
 }
 
@@ -228,6 +379,8 @@ export interface AcademicClass {
   name: string;
   numericLevel?: number;
   schoolId?: ID;
+  isActive?: boolean;
+  status?: string;
   sections: AcademicSection[];
   createdAt?: string;
   updatedAt?: string;
@@ -248,6 +401,14 @@ export interface AcademicSubject {
   id: ID;
   subjectName: string;
   subjectCode: string;
+  description?: string;
+  isActive?: boolean;
+  isDeleted?: boolean;
+  status?: string;
+  schoolId?: ID;
+  deletedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AcademicSubjectMutationResponse {
@@ -262,28 +423,107 @@ export interface AcademicSubjectLinkResponse {
   message?: string;
 }
 
+export interface AcademicActionResponse {
+  success?: boolean;
+  message?: string;
+}
+
 export interface AcademicSubjectListResponse {
   subjects: AcademicSubject[];
+}
+
+export interface HREmployeeLoginAccount {
+  id?: ID;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  status?: string;
+  username?: string;
 }
 
 export interface HREmployee {
   id: ID;
   schoolId: ID;
   userId?: ID;
+  loginAccount?: HREmployeeLoginAccount;
   username?: string;
+  password?: string;
   employeeId?: string;
   email: string;
   firstName: string;
   lastName: string;
   phone?: string;
+  mobileNo?: string;
   department?: string;
   role: string;
   baseSalary?: number;
   qualifications?: string[];
+  qualificationUrl?: string;
+  licenseUrl?: string;
+  bloodGroup?: string;
+  nationalId?: string;
+  vehicleNumber?: string;
+  gender?: string;
+  dob?: string;
+  maritalStatus?: string;
+  nationality?: string;
+  emergencyContactPhone?: string;
+  aadhaarNumber?: string;
+  panNumber?: string;
+  passportDetails?: {
+    passportNumber?: string;
+    expiryDate?: string;
+  };
+  voterId?: string;
+  photographUrl?: string;
+  appointmentLetterUrl?: string;
+  contractDocumentsUrl?: string;
+  medicalCertificatesUrl?: string;
+  policeVerificationUrl?: string;
+  emergencyContactRelationship?: string;
+  fullName?: string;
   status: string;
   joiningDate?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface HREmployeeUpsertInput {
+  username: string;
+  email: string;
+  password?: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  baseSalary: number;
+  mobileNo?: string;
+  phone?: string;
+  department?: string;
+  qualifications?: string[];
+  qualificationUrl?: string;
+  licenseUrl?: string;
+  bloodGroup?: string;
+  nationalId?: string;
+  vehicleNumber?: string;
+  gender?: string;
+  dob?: string;
+  maritalStatus?: string;
+  nationality?: string;
+  emergencyContactPhone?: string;
+  aadhaarNumber?: string;
+  panNumber?: string;
+  passportDetails?: {
+    passportNumber?: string;
+    expiryDate?: string;
+  };
+  voterId?: string;
+  photographUrl?: string;
+  appointmentLetterUrl?: string;
+  contractDocumentsUrl?: string;
+  medicalCertificatesUrl?: string;
+  policeVerificationUrl?: string;
+  emergencyContactRelationship?: string;
 }
 
 export interface HREmployeeListResponse {

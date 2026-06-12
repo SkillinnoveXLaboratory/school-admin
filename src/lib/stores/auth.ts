@@ -15,6 +15,7 @@ interface AuthState {
     user: User,
     activeSchoolId?: string | null,
   ) => void;
+  updateUser: (user: User) => void;
   setActiveSchool: (id: string | null) => void;
   logout: () => void;
 }
@@ -33,6 +34,13 @@ export const useAuthStore = create<AuthState>()(
           user,
           ...(activeSchoolId !== undefined ? { activeSchoolId } : {}),
         }),
+      updateUser: (user) =>
+        set((state) => ({
+          user: {
+            ...(state.user ?? {}),
+            ...user,
+          },
+        })),
       setActiveSchool: (id) => set({ activeSchoolId: id }),
       logout: () =>
         set({ user: null, token: null, refreshToken: null, activeSchoolId: null }),
@@ -47,7 +55,12 @@ export const useAuthStore = create<AuthState>()(
         return {
           ...stored,
           ...active,
-          user: active.user ?? stored.user ?? null,
+          user: active.user
+            ? {
+                ...(stored.user ?? {}),
+                ...active.user,
+              }
+            : stored.user ?? null,
           token: active.token ?? stored.token ?? null,
           refreshToken: active.refreshToken ?? stored.refreshToken ?? null,
           activeSchoolId: active.activeSchoolId ?? stored.activeSchoolId ?? null,
@@ -62,5 +75,10 @@ useAuthStore.subscribe((state) => {
 
   if (!state.token && !state.user) {
     window.localStorage.removeItem(LAST_LOGIN_USER_KEY);
+    return;
+  }
+
+  if (state.user) {
+    window.localStorage.setItem(LAST_LOGIN_USER_KEY, JSON.stringify(state.user));
   }
 });

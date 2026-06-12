@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/PageHeader';
@@ -12,10 +12,10 @@ import { compactId, formatDate, fullName, idOf, numberValue, rowsFrom, statusCla
 type ExamRecord = Record<string, any>;
 
 export function ExamsPage() {
+  const qc = useQueryClient();
   const [createdExams, setCreatedExams] = useState<ExamRecord[]>([]);
   const [defining, setDefining] = useState(false);
   const [schedulingExam, setSchedulingExam] = useState<ExamRecord | null>(null);
-  const [marksOpen, setMarksOpen] = useState(false);
   const [reportStudentId, setReportStudentId] = useState('');
 
   const classesQuery = useQuery({ queryKey: ['classes'], queryFn: () => Academic.classes.list() });
@@ -75,6 +75,56 @@ export function ExamsPage() {
     });
   };
 
+  const toggleExamMut = useMutation({
+    mutationFn: (payload: { id: string; isActive: boolean }) => Academic.exams.toggleStatus(payload.id, { isActive: payload.isActive }),
+    onSuccess: (body: any, payload) => {
+      toast.success(body?.message || 'Exam status toggled');
+      qc.setQueryData(['exams'], (current: any) => {
+        if (!current) return current;
+        const patchExam = (exam: any) => {
+          if (idOf(exam) !== payload.id) return exam;
+          const nextStatus = payload.isActive ? 'ACTIVE' : 'INACTIVE';
+          return { ...exam, status: nextStatus, isActive: payload.isActive };
+        };
+        if (Array.isArray(current.exams)) {
+          return { ...current, exams: current.exams.map(patchExam) };
+        }
+        if (Array.isArray(current.data)) {
+          return { ...current, data: current.data.map(patchExam) };
+        }
+        return current;
+      });
+      setCreatedExams((current) => current.map((exam) => {
+        if (idOf(exam) !== payload.id) return exam;
+        return { ...exam, status: payload.isActive ? 'ACTIVE' : 'INACTIVE', isActive: payload.isActive };
+      }));
+      qc.invalidateQueries({ queryKey: ['exams'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to toggle exam status'),
+  });
+
+  const deleteExamMut = useMutation({
+    mutationFn: (id: string) => Academic.exams.remove(id),
+    onSuccess: (body: any, examId) => {
+      toast.success(body?.message || 'Exam deleted');
+      setCreatedExams((current) => current.filter((exam) => idOf(exam) !== examId));
+      qc.invalidateQueries({ queryKey: ['exams'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to delete exam'),
+  });
+
+  function requestToggleExam(examId: string) {
+    if (!examId) return;
+    const exam = examCards.find((item) => idOf(item) === examId);
+    const active = examStatusLabel(exam ?? {}) === 'ACTIVE';
+    toggleExamMut.mutate({ id: examId, isActive: !active });
+  }
+
+  function requestDeleteExam(examId: string, label: string) {
+    if (!window.confirm(`Delete exam "${label}"? This cannot be undone.`)) return;
+    deleteExamMut.mutate(examId);
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -83,7 +133,6 @@ export function ExamsPage() {
         subtitle="Define exams, add paper schedules, submit marks, and fetch report cards from the live API."
         actions={
           <>
-            <button onClick={() => setMarksOpen(true)} className="btn-outline"><Icon name="check" size={16} /> Enter marks</button>
             <button onClick={() => setDefining(true)} className="btn-primary"><Icon name="plus" size={16} /> Define exam</button>
           </>
         }
@@ -113,8 +162,14 @@ export function ExamsPage() {
                     <p className="text-xs text-ink-400">{textOf(exam, ['term'])} · {compactId(exam)} · {rowsFrom(exam, ['schedules']).length} schedules</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <span className={examStatusClass(exam)}>{examStatusLabel(exam)}</span>
+                    <button onClick={() => requestToggleExam(idOf(exam))} disabled={toggleExamMut.isPending} className="btn-outline px-3 py-1.5 text-xs">
+                      {toggleExamMut.isPending ? 'Updating...' : examStatusLabel(exam) === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                    </button>
                     <button onClick={() => setSchedulingExam(exam)} className="btn-ghost px-3 py-1.5 text-xs">Add schedule</button>
-                    <button onClick={() => setMarksOpen(true)} className="btn-outline px-3 py-1.5 text-xs">Enter marks</button>
+                    <button onClick={() => requestDeleteExam(idOf(exam), textOf(exam, ['examName'], 'exam'))} disabled={deleteExamMut.isPending} className="btn-danger px-3 py-1.5 text-xs">
+                      {deleteExamMut.isPending ? 'Deleting...' : 'Delete'}
+                    </button>
                   </div>
                 </div>
                 {rowsFrom<any>(exam, ['schedules']).length > 0 && (
@@ -198,7 +253,6 @@ export function ExamsPage() {
             }}
           />
         )}
-        {marksOpen && <MarksEntryModal schedules={schedules} students={students} onClose={() => setMarksOpen(false)} />}
       </AnimatePresence>
     </div>
   );
@@ -249,6 +303,27 @@ function ScheduleModal({ exam, classes, onClose, onScheduled }: { exam: ExamReco
   const [sectionId, setSectionId] = useState(sections[0]?.id ?? '');
   const selectedSection = sections.find((section) => section.id === sectionId);
   const subjects = useMemo(() => dedupeSubjects(selectedSection?.subjects ?? []), [selectedSection]);
+  const subjectDetailQueries = useQueries({
+    queries: subjects.map((subject) => ({
+      queryKey: ['exam-schedule-subject-detail', subject.subjectId],
+      queryFn: () => Academic.subjects.get(subject.subjectId),
+      enabled: Boolean(subject.subjectId),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const subjectOptions = useMemo(
+    () =>
+      subjects.map((subject, index) => {
+        const query = subjectDetailQueries[index] as any;
+        const detail = query?.data?.subject ?? query?.data?.data;
+        return {
+          ...subject,
+          subjectName: detail?.subjectName || `Subject ${compactId(subject.subjectId)}`,
+          subjectCode: detail?.subjectCode || '',
+        };
+      }),
+    [subjects, subjectDetailQueries],
+  );
   const [form, setForm] = useState({ subjectId: subjects[0]?.subjectId ?? '', examDate: '', maxMarks: '100' });
 
   useEffect(() => {
@@ -297,121 +372,16 @@ function ScheduleModal({ exam, classes, onClose, onScheduled }: { exam: ExamReco
         </Select>
         <Select label="Subject" value={form.subjectId} onChange={(subjectId) => setForm({ ...form, subjectId })}>
           <option value="">Select subject</option>
-          {subjects.map((subject) => <option key={subject.subjectId} value={subject.subjectId}>Subject {compactId(subject.subjectId)}</option>)}
+          {subjectOptions.map((subject) => (
+            <option key={subject.subjectId} value={subject.subjectId}>
+              {subject.subjectName}{subject.subjectCode ? ` (${subject.subjectCode})` : ''}
+            </option>
+          ))}
         </Select>
         <Input label="Exam date" type="date" value={form.examDate} onChange={(examDate) => setForm({ ...form, examDate })} />
         <Input label="Max marks" type="number" value={form.maxMarks} onChange={(maxMarks) => setForm({ ...form, maxMarks })} />
       </div>
       {!subjects.length && <p className="mt-3 text-xs text-warning">The selected section has no linked subjects in `/classes`.</p>}
-    </Modal>
-  );
-}
-
-function MarksEntryModal({ schedules, students, onClose }: { schedules: any[]; students: Student[]; onClose: () => void }) {
-  const [scheduleId, setScheduleId] = useState(idOf(schedules[0]) || '');
-  const [manualScheduleId, setManualScheduleId] = useState('');
-  const [rows, setRows] = useState(() => students.slice(0, 40).map((student) => ({ studentId: student.id, name: `${student.firstName} ${student.lastName}`, marksObtained: '' })));
-  const [prefillLoading, setPrefillLoading] = useState(false);
-  const effectiveScheduleId = manualScheduleId || scheduleId;
-  const selectedSchedule = useMemo(() => schedules.find((schedule) => idOf(schedule) === effectiveScheduleId), [schedules, effectiveScheduleId]);
-  const save = useMutation({
-    mutationFn: () => Academic.exams.submitMarks(effectiveScheduleId, {
-      marksList: rows
-        .filter((row) => row.studentId && row.marksObtained !== '')
-        .map((row) => ({ studentId: row.studentId, marksObtained: numberValue(row.marksObtained, 0) })),
-    }),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Marks recorded');
-      onClose();
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to submit marks'),
-  });
-
-  useEffect(() => {
-    let alive = true;
-    const roster = students.slice(0, 40).map((student) => ({ studentId: student.id, name: `${student.firstName} ${student.lastName}`, marksObtained: '' }));
-
-    async function preload() {
-      if (!effectiveScheduleId || !selectedSchedule) {
-        setRows(roster);
-        setPrefillLoading(false);
-        return;
-      }
-
-      const examId = idOf(selectedSchedule.examId);
-      const subjectId = idOf(selectedSchedule.subjectId);
-      if (!examId || !subjectId) {
-        setRows(roster);
-        setPrefillLoading(false);
-        return;
-      }
-
-      setPrefillLoading(true);
-      try {
-        const nextRows = await Promise.all(
-          roster.map(async (row) => {
-            try {
-              const reportBody = await Academic.exams.reportCard(row.studentId);
-              const reportExams = rowsFrom<any>(reportBody, ['reportCard', 'data']);
-              const matchedExam = reportExams.find((exam) => textOf(exam, ['examId', 'id', '_id']) === examId);
-              const matchedSubject = matchedExam ? rowsFrom<any>(matchedExam, ['subjects']).find((subject) => idOf(subject.subjectId) === subjectId) : null;
-              const marks = matchedSubject?.marksObtained;
-              return { ...row, marksObtained: marks === undefined || marks === null ? '' : String(marks) };
-            } catch {
-              return row;
-            }
-          }),
-        );
-
-        if (!alive) return;
-        setRows(nextRows);
-      } finally {
-        if (alive) setPrefillLoading(false);
-      }
-    }
-
-    preload();
-    return () => {
-      alive = false;
-    };
-  }, [students, effectiveScheduleId, selectedSchedule]);
-
-  return (
-    <Modal
-      title="Bulk marks entry"
-      onClose={onClose}
-      size="xl"
-      footer={
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || prefillLoading || !effectiveScheduleId || rows.every((row) => row.marksObtained === '')} className="btn-primary">
-            {save.isPending ? 'Submitting...' : 'Submit marks'}
-          </button>
-        </>
-      }
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Select label="Schedule from created exams" value={scheduleId} onChange={setScheduleId}>
-          <option value="">Select schedule</option>
-          {schedules.map((schedule) => <option key={idOf(schedule)} value={idOf(schedule)}>{schedule.examName} · {formatDate(textOf(schedule, ['examDate'], ''))} · {compactId(schedule)}</option>)}
-        </Select>
-        <Input label="Or paste schedule ID" value={manualScheduleId} onChange={setManualScheduleId} />
-      </div>
-      {prefillLoading && <p className="mt-3 text-xs text-ink-400">Loading existing marks from the live report-card API...</p>}
-      <div className="mt-5 overflow-x-auto">
-        <table className="w-full min-w-[760px]">
-          <thead className="bg-muted/60"><tr><th className="table-header">Student</th><th className="table-header">Marks</th></tr></thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.studentId}>
-                <td className="table-cell font-medium text-ink-900">{row.name}<p className="font-mono text-[11px] text-ink-400">{row.studentId}</p></td>
-                <td className="table-cell"><input className="input py-2" type="number" value={row.marksObtained} onChange={(event) => setRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, marksObtained: event.target.value } : item))} /></td>
-              </tr>
-            ))}
-            {!rows.length && <tr><td colSpan={2} className="px-4 py-10 text-center text-sm text-ink-400">No students loaded for marks entry.</td></tr>}
-          </tbody>
-        </table>
-      </div>
     </Modal>
   );
 }
@@ -423,6 +393,18 @@ function dedupeSubjects(subjects: { subjectId: string; teacherId?: string }[]) {
     seen.add(subject.subjectId);
     return true;
   });
+}
+
+function examStatusLabel(exam: ExamRecord) {
+  const raw = exam.status ?? exam.isActive;
+  if (raw === false) return 'INACTIVE';
+  const status = String(raw ?? 'ACTIVE').toUpperCase();
+  if (status === 'INACTIVE' || status === 'FALSE' || status === '0') return 'INACTIVE';
+  return 'ACTIVE';
+}
+
+function examStatusClass(exam: ExamRecord) {
+  return examStatusLabel(exam) === 'ACTIVE' ? 'chip-brand' : 'chip-warning';
 }
 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone: string }) {

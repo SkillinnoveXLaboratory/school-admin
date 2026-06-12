@@ -29,11 +29,14 @@ import type {
   HRPayrollRecord,
   LoginCredentials,
   LoginResponse,
+  HREmployeeUpsertInput,
   PaginatedStudentsResponse,
   StudentProfileUpdate,
   StudentParentUpdate,
   Student,
   StudentIdCard,
+  TenantSettings,
+  TenantSettingsUpdateInput,
   PlatformKPIs,
   School,
 } from './types';
@@ -44,6 +47,7 @@ type RawSection = Record<string, unknown>;
 type RawSubject = Record<string, unknown>;
 type RawEmployee = Record<string, unknown>;
 type RawPayroll = Record<string, unknown>;
+type RawSettings = Record<string, unknown>;
 
 function firstString(...values: unknown[]): string {
   for (const value of values) {
@@ -55,6 +59,17 @@ function firstString(...values: unknown[]): string {
 function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
   const user = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const phone = firstString(user.phone, user.phoneNumber, user.mobile, user.contactPhone, user.contact_phone);
+  const profileImageUrl = firstString(
+    user.profileImageUrl,
+    user.profile_image_url,
+    user.photoUrl,
+    user.photo_url,
+    user.avatarUrl,
+    user.avatar_url,
+    user.image,
+    user.imageUrl,
+    user.image_url,
+  );
 
   return {
     id: firstString(user.id, user._id),
@@ -63,6 +78,7 @@ function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
     lastName: firstString(user.lastName, user.last_name),
     email: firstString(user.email),
     phone: phone || '',
+    profileImageUrl: profileImageUrl || undefined,
     role: firstString(user.role).toUpperCase() as LoginResponse['user']['role'],
     schoolId: firstString(user.schoolId, user.school_id) || null,
     status: (firstString(user.status).toUpperCase() || 'ACTIVE') as LoginResponse['user']['status'],
@@ -71,6 +87,8 @@ function normalizeLoginUser(raw: unknown): LoginResponse['user'] {
 
 function normalizeStudent(raw: RawStudent): Student {
   const parent = (raw.parentContact ?? raw.parent_contact ?? {}) as Record<string, unknown>;
+  const parentAddress = (parent.address ?? parent.addresses ?? {}) as Record<string, unknown>;
+  const classRef = (raw.classId ?? raw.class_id ?? {}) as Record<string, unknown>;
   return {
     id: firstString(raw.id, raw._id),
     enrollmentNumber: firstString(raw.enrollmentNumber, raw.enrollment_number),
@@ -81,14 +99,27 @@ function normalizeStudent(raw: RawStudent): Student {
     gender: (firstString(raw.gender).toUpperCase() || 'OTHER') as Student['gender'],
     photoUrl: firstString(raw.photoUrl, raw.photo_url) || undefined,
     schoolId: firstString(raw.schoolId, raw.school_id),
-    classId: firstString(raw.classId, raw.class_id),
+    classId: firstString(raw.classId, raw.class_id, classRef.id, classRef._id),
     sectionId: firstString(raw.sectionId, raw.section_id),
     parentContact: {
       fatherName: firstString(parent.fatherName, parent.father_name) || undefined,
       motherName: firstString(parent.motherName, parent.mother_name) || undefined,
       primaryPhone: firstString(parent.primaryPhone, parent.primary_phone),
-      email: firstString(parent.email) || undefined,
-      homeAddress: firstString(parent.homeAddress, parent.home_address),
+      parentEmail: firstString(parent.parentEmail, parent.parent_email, parent.email) || undefined,
+      email: firstString(parent.email, parent.parentEmail, parent.parent_email) || undefined,
+      homeAddress: firstString(
+        parent.homeAddress,
+        parent.home_address,
+        parentAddress.homeAddress,
+        parentAddress.home_address,
+      ),
+      address: {
+        homeAddress: firstString(parentAddress.homeAddress, parentAddress.home_address) || undefined,
+        city: firstString(parentAddress.city) || undefined,
+        district: firstString(parentAddress.district) || undefined,
+        state: firstString(parentAddress.state) || undefined,
+        pincode: firstString(parentAddress.pincode) || undefined,
+      },
     },
     emergencyContact: firstString(raw.emergencyContact, raw.emergency_contact),
     status: (firstString(raw.status).toUpperCase() || 'INACTIVE') as Student['status'],
@@ -126,6 +157,8 @@ function normalizeAcademicClass(raw: RawClass): AcademicClass {
     name: firstString(raw.name, raw.className, raw.class_name),
     numericLevel: typeof raw.numericLevel === 'number' ? raw.numericLevel : typeof raw.numeric_level === 'number' ? raw.numeric_level : undefined,
     schoolId: firstString(raw.schoolId, raw.school_id) || undefined,
+    isActive: typeof raw.isActive === 'boolean' ? raw.isActive : undefined,
+    status: firstString(raw.status) || undefined,
     sections,
     createdAt: firstString(raw.createdAt, raw.created_at) || undefined,
     updatedAt: firstString(raw.updatedAt, raw.updated_at) || undefined,
@@ -138,25 +171,74 @@ function normalizeAcademicSubject(raw: RawSubject): AcademicSubject {
     id: firstString(raw.id, raw._id),
     subjectName: firstString(raw.subjectName, raw.name),
     subjectCode: firstString(raw.subjectCode, raw.code, raw.subject_code),
+    description: firstString(raw.description) || undefined,
+    isActive: typeof raw.isActive === 'boolean' ? raw.isActive : undefined,
+    isDeleted: typeof raw.isDeleted === 'boolean' ? raw.isDeleted : undefined,
+    status: firstString(raw.status) || undefined,
+    schoolId: firstString(raw.schoolId, raw.school_id) || undefined,
+    deletedAt: firstString(raw.deletedAt, raw.deleted_at) || undefined,
+    createdAt: firstString(raw.createdAt, raw.created_at) || undefined,
+    updatedAt: firstString(raw.updatedAt, raw.updated_at) || undefined,
   };
 }
 
 function normalizeEmployee(raw: RawEmployee): HREmployee {
-  const user = (raw.userId ?? raw.user ?? {}) as RawEmployee;
+  const user = (typeof raw.userId === 'object' && raw.userId !== null
+    ? raw.userId
+    : typeof raw.user === 'object' && raw.user !== null
+      ? raw.user
+      : {}) as RawEmployee;
+  const passport = (raw.passportDetails ?? raw.passport_details ?? {}) as Record<string, unknown>;
+  const mobileNo = firstString(raw.mobileNo, raw.mobile_no, raw.phone, user.mobileNo, user.mobile_no, user.phone) || undefined;
   return {
     id: firstString(raw.id, raw._id),
     schoolId: firstString(raw.schoolId, raw.school_id),
     userId: firstString(raw.userId as unknown as string, user._id) || undefined,
+    loginAccount: user._id ? {
+      id: firstString(user._id) || undefined,
+      email: firstString(user.email) || undefined,
+      firstName: firstString(user.firstName, user.first_name) || undefined,
+      lastName: firstString(user.lastName, user.last_name) || undefined,
+      phone: firstString(user.phone, user.mobileNo, user.mobile_no) || undefined,
+      status: firstString(user.status) || undefined,
+      username: firstString(user.username) || undefined,
+    } : undefined,
     username: firstString(raw.username, user.username) || undefined,
+    password: firstString(raw.password, user.password) || undefined,
     employeeId: firstString(raw.employeeId, raw.employee_id) || undefined,
     email: firstString(raw.email, user.email),
     firstName: firstString(raw.firstName, user.firstName),
     lastName: firstString(raw.lastName, user.lastName),
-    phone: firstString(raw.phone, user.phone) || undefined,
+    phone: mobileNo,
+    mobileNo,
     department: firstString(raw.department, raw.departmentName, user.department) || undefined,
     role: firstString(raw.role, user.role),
     baseSalary: typeof raw.baseSalary === 'number' ? raw.baseSalary : undefined,
     qualifications: Array.isArray(raw.qualifications) ? raw.qualifications.map((q) => String(q)) : [],
+    qualificationUrl: firstString(raw.qualificationUrl, raw.qualification_url) || undefined,
+    licenseUrl: firstString(raw.licenseUrl, raw.license_url) || undefined,
+    bloodGroup: firstString(raw.bloodGroup, raw.blood_group) || undefined,
+    nationalId: firstString(raw.nationalId, raw.national_id) || undefined,
+    vehicleNumber: firstString(raw.vehicleNumber, raw.vehicle_number) || undefined,
+    gender: firstString(raw.gender) || undefined,
+    dob: firstString(raw.dob, raw.dateOfBirth, raw.date_of_birth) || undefined,
+    maritalStatus: firstString(raw.maritalStatus, raw.marital_status) || undefined,
+    nationality: firstString(raw.nationality) || undefined,
+    emergencyContactPhone: firstString(raw.emergencyContactPhone, raw.emergency_contact_phone, raw.emergencyContact, raw.emergency_contact) || undefined,
+    aadhaarNumber: firstString(raw.aadhaarNumber, raw.aadhaar_number) || undefined,
+    panNumber: firstString(raw.panNumber, raw.pan_number) || undefined,
+    passportDetails: {
+      passportNumber: firstString(passport.passportNumber, passport.passport_number) || undefined,
+      expiryDate: firstString(passport.expiryDate, passport.expiry_date) || undefined,
+    },
+    voterId: firstString(raw.voterId, raw.voter_id) || undefined,
+    photographUrl: firstString(raw.photographUrl, raw.photograph_url) || undefined,
+    appointmentLetterUrl: firstString(raw.appointmentLetterUrl, raw.appointment_letter_url) || undefined,
+    contractDocumentsUrl: firstString(raw.contractDocumentsUrl, raw.contract_documents_url) || undefined,
+    medicalCertificatesUrl: firstString(raw.medicalCertificatesUrl, raw.medical_certificates_url) || undefined,
+    policeVerificationUrl: firstString(raw.policeVerificationUrl, raw.police_verification_url) || undefined,
+    emergencyContactRelationship: firstString(raw.emergencyContactRelationship, raw.emergency_contact_relationship) || undefined,
+    fullName: firstString(raw.fullName, raw.full_name) || undefined,
     status: firstString(raw.status, user.status),
     joiningDate: firstString(raw.joiningDate, raw.join_date) || undefined,
     createdAt: firstString(raw.createdAt, raw.created_at) || undefined,
@@ -179,11 +261,93 @@ function normalizePayrollRecord(raw: RawPayroll): HRPayrollRecord {
   };
 }
 
+function normalizeTenantSettings(raw: RawSettings): TenantSettings {
+  const principalInfo = (raw.principalInfo ?? raw.principal_info ?? {}) as Record<string, unknown>;
+  const academicBoardInfo = (raw.academicBoardInfo ?? raw.academic_board_info ?? {}) as Record<string, unknown>;
+  const affiliationDetails = (raw.affiliationDetails ?? raw.affiliation_details ?? {}) as Record<string, unknown>;
+  const registrationNumbers = (raw.registrationNumbers ?? raw.registration_numbers ?? {}) as Record<string, unknown>;
+
+  return {
+    id: firstString(raw.id, raw._id) || undefined,
+    schoolId: firstString(raw.schoolId, raw.school_id) || undefined,
+    schoolName: firstString(raw.schoolName, raw.school_name) || undefined,
+    principalInfo: {
+      name: firstString(principalInfo.name) || undefined,
+      qualification: firstString(principalInfo.qualification) || undefined,
+      email: firstString(principalInfo.email) || undefined,
+      phone: firstString(principalInfo.phone) || undefined,
+    },
+    academicBoardInfo: {
+      boardName: firstString(academicBoardInfo.boardName, academicBoardInfo.board_name) || undefined,
+      boardCode: firstString(academicBoardInfo.boardCode, academicBoardInfo.board_code) || undefined,
+      affiliationStatus: firstString(academicBoardInfo.affiliationStatus, academicBoardInfo.affiliation_status) || undefined,
+    },
+    affiliationDetails: {
+      affiliationNo: firstString(affiliationDetails.affiliationNo, affiliationDetails.affiliation_no) || undefined,
+      expiryDate: firstString(affiliationDetails.expiryDate, affiliationDetails.expiry_date) || undefined,
+      type: firstString(affiliationDetails.type) || undefined,
+    },
+    registrationNumbers: {
+      schoolRegNo: firstString(registrationNumbers.schoolRegNo, registrationNumbers.school_reg_no) || undefined,
+      trustRegNo: firstString(registrationNumbers.trustRegNo, registrationNumbers.trust_reg_no) || undefined,
+    },
+    enrollmentTypes: Array.isArray(raw.enrollmentTypes) ? raw.enrollmentTypes.map((value) => String(value)) : [],
+    bloodGroups: Array.isArray(raw.bloodGroups) ? raw.bloodGroups.map((value) => String(value)) : [],
+    genders: Array.isArray(raw.genders) ? raw.genders.map((value) => String(value)) : [],
+    employeeRoles: Array.isArray(raw.employeeRoles) ? raw.employeeRoles.map((value) => String(value)) : [],
+    examTerms: Array.isArray(raw.examTerms) ? raw.examTerms.map((value) => String(value)) : [],
+    libraryFinePerDay: typeof raw.libraryFinePerDay === 'number' ? raw.libraryFinePerDay : undefined,
+    maxBooksPerStudent: typeof raw.maxBooksPerStudent === 'number' ? raw.maxBooksPerStudent : undefined,
+    allowParentLogin: typeof raw.allowParentLogin === 'boolean' ? raw.allowParentLogin : undefined,
+    allowStudentLogin: typeof raw.allowStudentLogin === 'boolean' ? raw.allowStudentLogin : undefined,
+    schoolTheme: firstString(raw.schoolTheme, raw.school_theme) || undefined,
+    schoolLogoUrl: firstString(raw.schoolLogoUrl, raw.school_logo_url) || undefined,
+    schoolWebsiteUrl: firstString(raw.schoolWebsiteUrl, raw.school_website_url) || undefined,
+    createdAt: firstString(raw.createdAt, raw.created_at) || undefined,
+    updatedAt: firstString(raw.updatedAt, raw.updated_at) || undefined,
+  };
+}
+
 function normalizeAdmission(raw: RawStudent): AdmissionApplication {
   const parent = (raw.parentContact ?? raw.parent_contact ?? {}) as Record<string, unknown>;
+  const address = (raw.address ?? raw.addressDetails ?? raw.address_details ?? {}) as Record<string, unknown>;
+  const academic = (raw.academic ?? raw.academicDetails ?? raw.academic_details ?? {}) as Record<string, unknown>;
   const docs = Array.isArray(raw.documents)
     ? raw.documents.map((doc) => normalizeAdmissionDocument(doc as RawStudent))
     : [];
+  const classApplied = firstString(
+    academic.classApplied,
+    academic.class_applied,
+    raw.classApplied,
+    raw.classAppliedFor,
+    raw.class_applied_for,
+  ) || undefined;
+  const previousSchool = firstString(
+    academic.previousSchool,
+    academic.previous_school,
+    raw.previousSchool,
+    raw.previousSchoolName,
+    raw.previous_school_name,
+  ) || undefined;
+  const enrollmentType = firstString(
+    academic.enrollmentType,
+    academic.enrollment_type,
+    raw.enrollmentType,
+    raw.enrollment_type,
+  ) || undefined;
+  const lastGradeCompleted = firstString(
+    academic.lastGradeCompleted,
+    academic.last_grade_completed,
+    raw.lastGradeCompleted,
+    raw.last_grade_completed,
+  ) || undefined;
+  const aadharNo = firstString(raw.aadharNo, raw.aadhar_no, raw.nationalId, raw.national_id) || undefined;
+  const emergencyContactNo = firstString(
+    raw.emergencyContactNo,
+    raw.emergency_contact_no,
+    raw.emergencyContact,
+    raw.emergency_contact,
+  ) || undefined;
   return {
     id: firstString(raw.id, raw._id),
     schoolId: firstString(raw.schoolId, raw.school_id),
@@ -191,13 +355,56 @@ function normalizeAdmission(raw: RawStudent): AdmissionApplication {
     lastName: firstString(raw.lastName, raw.last_name),
     gender: (firstString(raw.gender).toUpperCase() || 'OTHER') as AdmissionApplication['gender'],
     dateOfBirth: firstString(raw.dateOfBirth, raw.date_of_birth),
-    emergencyContact: firstString(raw.emergencyContact, raw.emergency_contact),
+    emergencyContact: emergencyContactNo || '',
+    emergencyContactName: firstString(raw.emergencyContactName, raw.emergency_contact_name) || undefined,
+    emergencyContactNo,
+    aadharNo,
+    bloodGroup: firstString(raw.bloodGroup, raw.blood_group) || undefined,
+    identificationMark: firstString(raw.identificationMark, raw.identification_mark) || undefined,
+    nationalId: aadharNo,
+    guardianName: firstString(raw.guardianName, raw.guardian_name) || undefined,
+    primaryContactNo: firstString(raw.primaryContactNo, raw.primary_contact_no) || undefined,
+    secondaryContactNo: firstString(raw.secondaryContactNo, raw.secondary_contact_no) || undefined,
+    primaryPhone: firstString(raw.primaryPhone, raw.primary_phone, raw.primaryContactNo, raw.primary_contact_no) || undefined,
+    secondaryPhone: firstString(raw.secondaryPhone, raw.secondary_phone, raw.secondaryContactNo, raw.secondary_contact_no) || undefined,
+    parentEmail: firstString(raw.parentEmail, raw.parent_email) || undefined,
+    address: {
+      homeAddress: firstString(address.homeAddress, address.home_address, raw.homeAddress, raw.home_address) || undefined,
+      city: firstString(address.city, raw.city) || undefined,
+      district: firstString(address.district, raw.district) || undefined,
+      state: firstString(address.state, raw.state) || undefined,
+      pincode: firstString(address.pincode, raw.pincode) || undefined,
+    },
+    academic: {
+      classApplied,
+      section: firstString(academic.section, raw.section) || undefined,
+      enrollmentType,
+      previousSchool,
+      lastGradeCompleted,
+    },
+    enrollmentType,
+    lastGradeCompleted,
+    isParentSigned: typeof raw.isParentSigned === 'boolean'
+      ? raw.isParentSigned
+      : typeof raw.isDeclarationSigned === 'boolean'
+        ? raw.isDeclarationSigned
+        : undefined,
+    isDeclarationSigned: typeof raw.isDeclarationSigned === 'boolean' ? raw.isDeclarationSigned : undefined,
+    classAppliedFor: classApplied,
+    previousSchoolName: previousSchool,
     status: (firstString(raw.status).toUpperCase() || 'APPLIED') as AdmissionApplication['status'],
     parentContact: {
-      fatherName: firstString(parent.fatherName, parent.father_name) || undefined,
-      motherName: firstString(parent.motherName, parent.mother_name) || undefined,
-      primaryPhone: firstString(parent.primaryPhone, parent.primary_phone) || undefined,
-      homeAddress: firstString(parent.homeAddress, parent.home_address) || undefined,
+      fatherName: firstString(parent.fatherName, parent.father_name, raw.fatherName, raw.father_name) || undefined,
+      motherName: firstString(parent.motherName, parent.mother_name, raw.motherName, raw.mother_name) || undefined,
+      primaryPhone: firstString(parent.primaryPhone, parent.primary_phone, raw.primaryContactNo, raw.primary_contact_no) || undefined,
+      secondaryPhone: firstString(parent.secondaryPhone, parent.secondary_phone, raw.secondaryContactNo, raw.secondary_contact_no) || undefined,
+      guardianName: firstString(parent.guardianName, parent.guardian_name, raw.guardianName, raw.guardian_name) || undefined,
+      parentEmail: firstString(parent.parentEmail, parent.parent_email) || undefined,
+      homeAddress: firstString(parent.homeAddress, parent.home_address, raw.homeAddress, raw.home_address) || undefined,
+      city: firstString(parent.city, raw.city) || undefined,
+      district: firstString(parent.district, raw.district) || undefined,
+      state: firstString(parent.state, raw.state) || undefined,
+      pincode: firstString(parent.pincode, raw.pincode) || undefined,
     },
     documents: docs,
     photoUrl: firstString(raw.photoUrl, raw.photo_url) || undefined,
@@ -228,10 +435,61 @@ export const Auth = {
     };
   },
   refresh: () => unwrap<LoginResponse>(api.post('/auth/refresh')),
-  me:      () => unwrap<LoginResponse['user']>(api.get('/auth/me')),
+  me: async (): Promise<LoginResponse['user']> => {
+    const res = await api.get('/auth/me');
+    const body = res.data as Record<string, unknown>;
+    return normalizeLoginUser(body.user ?? body.data ?? body.admin ?? body);
+  },
+  uploadProfileImage: async (image: File): Promise<{ success?: boolean; cdnUrl: string; message?: string }> => {
+    const form = new FormData();
+    form.append('image', image);
+    const res = await api.patch('/auth/me/profile-image', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const body = res.data as Record<string, unknown>;
+    return {
+      success: body.success as boolean | undefined,
+      message: firstString(body.message) || undefined,
+      cdnUrl: firstString(body.cdnUrl, body.url) || '',
+    };
+  },
+  changePassword: async (body: { currentPassword: string; newPassword: string }): Promise<{ success?: boolean; message?: string }> => {
+    const res = await api.patch('/auth/me/password', {
+      currentPassword: body.currentPassword,
+      oldPassword: body.currentPassword,
+      newPassword: body.newPassword,
+    });
+    const data = res.data as Record<string, unknown>;
+    return {
+      success: data.success as boolean | undefined,
+      message: firstString(data.message) || undefined,
+    };
+  },
 };
 
 /* ───────── Module 1: Super Admin & Tenants ───────── */
+export const Settings = {
+  get: async (): Promise<{ success?: boolean; settings: TenantSettings }> => {
+    const res = await api.get('/settings');
+    const data = res.data as Record<string, unknown>;
+    const settings = ((data.settings ?? data.data ?? {}) as RawSettings) ?? {};
+    return {
+      success: data.success as boolean | undefined,
+      settings: normalizeTenantSettings(settings),
+    };
+  },
+  update: async (body: TenantSettingsUpdateInput): Promise<{ success?: boolean; message?: string; settings?: TenantSettings }> => {
+    const res = await api.put('/settings', body);
+    const data = res.data as Record<string, unknown>;
+    const settingsNode = (data.settings ?? data.data) as RawSettings | undefined;
+    return {
+      success: data.success as boolean | undefined,
+      message: firstString(data.message) || undefined,
+      settings: settingsNode ? normalizeTenantSettings(settingsNode) : undefined,
+    };
+  },
+};
+
 export const SuperAdmin = {
   login: (creds: LoginCredentials) =>
     unwrap<LoginResponse>(api.post('/super-admin/auth/login', creds)),
@@ -395,13 +653,39 @@ export const Students = {
   idCard: async (id: ID): Promise<StudentIdCard> => {
     const res = await api.get(`/students/${id}/id-card`);
     const body = res.data as Record<string, unknown>;
-    const data = (body.data as Record<string, unknown> | undefined) ?? body;
+    const data = (body.idCard as Record<string, unknown> | undefined)
+      ?? (body.data as Record<string, unknown> | undefined)
+      ?? body;
+    const layout = (data.layout ?? data.cardLayout ?? {}) as Record<string, unknown>;
+    const enrollmentNumber = firstString(data.enrollmentNumber, data.enrollment_number) || '';
+    const studentId = firstString(data.studentId, data.student_id, data.id);
     return {
-      name: firstString(data.name),
-      enrollmentNumber: firstString(data.enrollmentNumber, data.enrollment_number),
-      className: firstString(data.className, data.class_name),
+      name: firstString(data.fullName, data.name) || enrollmentNumber || studentId || 'Student',
+      fullName: firstString(data.fullName, data.name) || undefined,
+      schoolId: firstString(data.schoolId, data.school_id) || undefined,
+      studentId: studentId || undefined,
+      enrollmentNumber,
+      dateOfBirth: firstString(data.dateOfBirth, data.date_of_birth) || undefined,
+      emergencyPhone: firstString(data.emergencyPhone, data.emergency_phone, data.emergencyContact, data.emergency_contact) || undefined,
+      primaryPhone: firstString(data.primaryPhone, data.primary_phone) || undefined,
+      className: firstString(data.className, data.class_name) || undefined,
       photoUrl: firstString(data.photoUrl, data.photo_url) || undefined,
-      qrCodeData: firstString(data.qrCodeData, data.qr_code_data),
+      layout: {
+        template: firstString(layout.template, layout.cardTemplate, layout.card_template) || undefined,
+        primaryColor: firstString(layout.primaryColor, layout.primary_color) || undefined,
+        textColor: firstString(layout.textColor, layout.text_color) || undefined,
+        barcodeType: firstString(layout.barcodeType, layout.barcode_type) || undefined,
+      },
+      qrCodeData: firstString(
+        data.qrCodeData,
+        data.qr_code_data,
+        data.barcodeData,
+        data.barcode_data,
+        data.barcodeValue,
+        data.barcode_value,
+        enrollmentNumber,
+        studentId,
+      ) || '',
     };
   },
   updateParent: async (id: ID, body: StudentParentUpdate): Promise<Student | undefined> => {
@@ -417,6 +701,30 @@ export const Students = {
     }
 
     return undefined;
+  },
+  triggerBirthdays: async () => {
+    const res = await api.post('/students/trigger-birthdays');
+    const body = res.data as Record<string, unknown>;
+    return {
+      success: body.success as boolean | undefined,
+      message: firstString(body.message) || undefined,
+      report: (body.report as Record<string, unknown> | undefined)
+        ? {
+            scannedCount: typeof (body.report as Record<string, unknown>).scannedCount === 'number'
+              ? (body.report as Record<string, unknown>).scannedCount as number
+              : undefined,
+            birthdayCount: typeof (body.report as Record<string, unknown>).birthdayCount === 'number'
+              ? (body.report as Record<string, unknown>).birthdayCount as number
+              : undefined,
+            notifiedCount: typeof (body.report as Record<string, unknown>).notifiedCount === 'number'
+              ? (body.report as Record<string, unknown>).notifiedCount as number
+              : undefined,
+            errors: Array.isArray((body.report as Record<string, unknown>).errors)
+              ? ((body.report as Record<string, unknown>).errors as unknown[]).map((item) => String(item))
+              : undefined,
+          }
+        : undefined,
+    };
   },
 };
 
@@ -451,6 +759,24 @@ export const Academic = {
     },
     create: async (body: { className: string }): Promise<AcademicClassMutationResponse> => {
       const res = await api.post('/classes', body);
+      const data = res.data as Record<string, unknown>;
+      return {
+        success: data.success as boolean | undefined,
+        message: firstString(data.message) || undefined,
+        class: data.class ? normalizeAcademicClass(data.class as RawClass) : undefined,
+      };
+    },
+    toggleStatus: async (classId: ID, body: { isActive: boolean }): Promise<AcademicClassMutationResponse> => {
+      const res = await api.patch(`/classes/${classId}/toggle-status`, body);
+      const data = res.data as Record<string, unknown>;
+      return {
+        success: data.success as boolean | undefined,
+        message: firstString(data.message) || undefined,
+        class: data.class ? normalizeAcademicClass(data.class as RawClass) : undefined,
+      };
+    },
+    remove: async (classId: ID): Promise<AcademicClassMutationResponse> => {
+      const res = await api.delete(`/classes/${classId}`);
       const data = res.data as Record<string, unknown>;
       return {
         success: data.success as boolean | undefined,
@@ -503,6 +829,28 @@ export const Academic = {
         subject: subject ? normalizeAcademicSubject(subject) : undefined,
       };
     },
+    remove: async (id: ID): Promise<AcademicSubjectMutationResponse> => {
+      const res = await api.delete(`/subjects/${id}`);
+      const data = res.data as Record<string, unknown>;
+      const subject = (data.data ?? data.subject) as RawSubject | undefined;
+      return {
+        success: data.success as boolean | undefined,
+        message: firstString(data.message) || undefined,
+        data: subject ? normalizeAcademicSubject(subject) : undefined,
+        subject: subject ? normalizeAcademicSubject(subject) : undefined,
+      };
+    },
+    toggleStatus: async (id: ID, body: { isActive: boolean }): Promise<AcademicSubjectMutationResponse> => {
+      const res = await api.patch(`/subjects/${id}/toggle-status`, body);
+      const data = res.data as Record<string, unknown>;
+      const subject = (data.data ?? data.subject) as RawSubject | undefined;
+      return {
+        success: data.success as boolean | undefined,
+        message: firstString(data.message) || undefined,
+        data: subject ? normalizeAcademicSubject(subject) : undefined,
+        subject: subject ? normalizeAcademicSubject(subject) : undefined,
+      };
+    },
     linkToSection: async (
       classId: ID,
       sectionId: ID,
@@ -520,6 +868,7 @@ export const Academic = {
     addSlot: (body: Record<string, unknown>) => api.post('/timetable/slots', body).then((res) => res.data),
     forSection: (classId: ID, sectionId: ID) =>
       api.get(`/timetable/class/${classId}/section/${sectionId}`).then((res) => res.data),
+    updateStructure: (body: Record<string, unknown>) => api.put('/timetable/structure', body).then((res) => res.data),
   },
   homework: {
     publish: (body: Record<string, unknown>) => api.post('/homework', body).then((res) => res.data),
@@ -540,6 +889,8 @@ export const Academic = {
       api.post(`/exams/schedules/${scheduleId}/marks`, body).then((res) => res.data),
     reportCard: (studentId: ID) =>
       api.get(`/exams/report-card/student/${studentId}`).then((res) => res.data),
+    toggleStatus: (id: ID, body: { isActive: boolean }) => api.patch(`/exams/${id}/toggle-status`, body).then((res) => res.data),
+    remove: (id: ID) => api.delete(`/exams/${id}`).then((res) => res.data),
   },
 };
 
@@ -586,6 +937,9 @@ export const Fees = {
     list: () => api.get('/fees/structures').then((res) => res.data),
     create: (body: Record<string, unknown>) => api.post('/fees/structures', body).then((res) => res.data),
   },
+  purposes: {
+    list: () => api.get('/fees/purposes').then((res) => res.data),
+  },
   generateYearly: (body: Record<string, unknown>) =>
     api.post('/fees/generate-yearly', body).then((res) => res.data),
   forStudent: (studentId: ID) => api.get(`/fees/student/${studentId}`).then((res) => res.data),
@@ -596,6 +950,7 @@ export const Fees = {
   invoices: {
     list: (q?: Record<string, unknown>) => api.get('/fees/invoices', { params: q }).then((res) => res.data),
     get: (id: ID) => api.get(`/fees/invoices/${id}`).then((res) => res.data),
+    pdf: (id: ID) => api.get(`/fees/invoices/${id}/pdf`, { responseType: 'blob' }).then((res) => res.data),
   },
   dailyCashLedger: (q?: { date?: string }) =>
     api.get('/fees/reports/daily-cash-ledger', { params: q }).then((res) => res.data),
@@ -633,17 +988,7 @@ export const HR = {
       const candidate = (data.employee ?? data.data ?? data.user ?? null) as RawEmployee | null;
       return candidate ? normalizeEmployee(candidate) : undefined;
     },
-    create: async (body: {
-      username: string;
-      email: string;
-      firstName: string;
-      lastName: string;
-      role: string;
-      baseSalary: number;
-      phone?: string;
-      department?: string;
-      qualifications?: string[];
-    }): Promise<HREmployeeMutationResponse> => {
+    create: async (body: HREmployeeUpsertInput): Promise<HREmployeeMutationResponse> => {
       const res = await api.post('/hr/employees', body);
       const data = res.data as Record<string, unknown>;
       return {
@@ -652,21 +997,21 @@ export const HR = {
         employee: data.employee ? normalizeEmployee(data.employee as RawEmployee) : undefined,
       };
     },
-    update: async (id: ID, body: {
-      firstName?: string;
-      lastName?: string;
-      role?: string;
-      baseSalary?: number;
-      phone?: string;
-      department?: string;
-      qualifications?: string[];
-    }): Promise<HREmployeeMutationResponse> => {
+    update: async (id: ID, body: Partial<HREmployeeUpsertInput>): Promise<HREmployeeMutationResponse> => {
       const res = await api.put(`/hr/employees/${id}`, body);
       const data = res.data as Record<string, unknown>;
       return {
         success: data.success as boolean | undefined,
         message: firstString(data.message) || undefined,
         employee: data.employee ? normalizeEmployee(data.employee as RawEmployee) : undefined,
+      };
+    },
+    remove: async (id: ID): Promise<{ success?: boolean; message?: string }> => {
+      const res = await api.delete(`/hr/employees/${id}`);
+      const data = res.data as Record<string, unknown>;
+      return {
+        success: data.success as boolean | undefined,
+        message: firstString(data.message) || undefined,
       };
     },
   },
@@ -713,6 +1058,20 @@ export const HR = {
         },
       };
     },
+  },
+};
+
+export const Files = {
+  upload: async (file: File): Promise<string> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await api.post('/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const data = res.data as Record<string, unknown>;
+    if (data.success === false) {
+      throw new Error(firstString(data.message) || 'Upload failed');
+    }
+    const fileNode = (data.file as Record<string, unknown> | undefined) ?? {};
+    return firstString(fileNode.url, data.url) || '';
   },
 };
 

@@ -32,7 +32,6 @@ export function HomeworkPage() {
         eyebrow="Module 5"
         title="Homework"
         subtitle="Live assignment publishing, due dates, and submission evaluation."
-        actions={<button onClick={() => setCreating(true)} className="btn-primary"><Icon name="plus" size={16} /> Publish assignment</button>}
       />
 
       <section className="grid gap-3 sm:grid-cols-3">

@@ -6,46 +6,26 @@ import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/PageHeader';
 import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
-import { Academic, Fees, Students } from '@/lib/api/services';
+import { Academic, Fees } from '@/lib/api/services';
 import { formatDate, idOf, isRecord, money, rowsFrom, textOf } from '@/lib/viewUtils';
 
 export function FeesPage() {
   const qc = useQueryClient();
   const [activeInvoice, setActiveInvoice] = useState<any>(null);
-  const [discountOpen, setDiscountOpen] = useState(false);
   const [structureOpen, setStructureOpen] = useState(false);
-  const [studentId, setStudentId] = useState('');
-  const [amountPaid, setAmountPaid] = useState('');
-  const [academicYear, setAcademicYear] = useState(defaultAcademicYear());
 
   const invoicesQuery = useQuery({ queryKey: ['invoices'], queryFn: () => Fees.invoices.list({ page: 1, limit: 50 }) });
   const ledgerQuery = useQuery({ queryKey: ['daily-cash'], queryFn: () => Fees.dailyCashLedger({ date: new Date().toISOString().slice(0, 10) }) });
-  const studentsQuery = useQuery({ queryKey: ['students', 'fees'], queryFn: () => Students.list({ page: 1, limit: 100 }) });
   const structuresQuery = useQuery({ queryKey: ['fee-structures'], queryFn: () => Fees.structures.list() });
+  const purposesQuery = useQuery({ queryKey: ['fee-purposes'], queryFn: () => Fees.purposes.list() });
 
   const invoices = rowsFrom<any>(invoicesQuery.data, ['invoices', 'data']);
   const ledgerInvoices = rowsFrom<any>(ledgerQuery.data, ['invoices', 'data']);
   const structures = rowsFrom<any>(structuresQuery.data, ['structures', 'data']);
+  const purposes = rowsFrom<any>(purposesQuery.data, ['purposes', 'data']);
   const summary = isRecord(ledgerQuery.data?.summary) ? ledgerQuery.data.summary : {};
-  const students = studentsQuery.data?.students ?? [];
 
-  const selectedStudent = students.find((student) => student.id === studentId);
   const totalInvoiced = useMemo(() => invoices.reduce((sum, invoice) => sum + Number(invoice.amountPaid ?? 0), 0), [invoices]);
-
-  const pay = useMutation({
-    mutationFn: () => Fees.payCash(studentId, {
-      amountPaid: Number(amountPaid),
-      academicYear,
-    }),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Cash payment recorded');
-      setAmountPaid('');
-      setAcademicYear(defaultAcademicYear());
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['daily-cash'] });
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to record cash payment'),
-  });
 
   return (
     <div className="space-y-6">
@@ -58,9 +38,6 @@ export function FeesPage() {
             <button onClick={() => setStructureOpen(true)} className="btn-outline w-full justify-center sm:w-auto">
               <Icon name="settings" size={16} /> Structures
             </button>
-            <button onClick={() => setDiscountOpen(true)} className="btn-primary w-full justify-center sm:w-auto">
-              <Icon name="plus" size={16} /> Discount
-            </button>
           </>
         )}
       />
@@ -70,6 +47,42 @@ export function FeesPage() {
         <Stat label="Invoices" value={textOf(invoicesQuery.data?.meta, ['total'], String(invoices.length))} sub="returned by API" />
         <Stat label="Invoice cash" value={money(totalInvoiced)} sub="current page total" />
         <Stat label="Fee structures" value={structures.length} sub="baseline rows" />
+      </section>
+
+      <section className="card overflow-hidden">
+        <div className="border-b border-line p-4 sm:p-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="font-display text-lg font-semibold">Fee purposes</h2>
+            <p className="text-sm text-ink-500">Loaded from `/fees/purposes`.</p>
+          </div>
+          <span className="chip-brand w-fit">{purposes.length} purposes</span>
+        </div>
+        <div className="p-4 sm:p-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {purposes.map((purpose) => (
+              <article key={idOf(purpose)} className="rounded-2xl border border-line bg-gradient-to-br from-white to-muted/30 p-4 shadow-soft">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-ink-900">{textOf(purpose, ['name'], 'Fee purpose')}</p>
+                    <p className="mt-1 text-xs text-ink-400 break-all">{idOf(purpose)}</p>
+                  </div>
+                  <span className={purpose.isRefundable ? 'chip-success' : 'chip-warning'}>
+                    {purpose.isRefundable ? 'Refundable' : 'Non-refundable'}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-ink-600">
+                  {textOf(purpose, ['description'], 'No description provided.')}
+                </p>
+              </article>
+            ))}
+            {purposesQuery.isLoading && Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="h-28 rounded-2xl bg-muted/50 animate-pulse" />
+            ))}
+            {!purposesQuery.isLoading && !purposes.length && (
+              <p className="rounded-2xl border border-dashed border-line p-4 text-sm text-ink-400">No fee purposes returned.</p>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
@@ -126,32 +139,6 @@ export function FeesPage() {
 
         <aside className="space-y-5">
           <div className="card p-4 sm:p-5">
-            <h2 className="font-display text-lg font-semibold">Collect cash</h2>
-            <div className="mt-4 space-y-3">
-              <Select label="Student" value={studentId} onChange={setStudentId}>
-                <option value="">Select student</option>
-                {students.map((student) => (
-                  <option key={student.id} value={student.id}>{student.firstName} {student.lastName}</option>
-                ))}
-              </Select>
-              <Input label="Academic year" value={academicYear} onChange={setAcademicYear} />
-              <Input label="Amount paid" type="number" value={amountPaid} onChange={setAmountPaid} />
-              <button
-                onClick={() => pay.mutate()}
-                disabled={pay.isPending || !studentId || !academicYear || Number(amountPaid) <= 0}
-                className="btn-primary w-full"
-              >
-                <Icon name="finance" size={16} /> {pay.isPending ? 'Recording...' : 'Record cash'}
-              </button>
-              {selectedStudent && (
-                <p className="rounded-xl bg-muted/50 p-3 text-xs text-ink-500">
-                  Recording against {selectedStudent.firstName} {selectedStudent.lastName}.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="card p-4 sm:p-5">
             <h2 className="font-display text-lg font-semibold">Daily ledger</h2>
             <p className="text-sm text-ink-500">Report date: {textOf(ledgerQuery.data, ['reportDate'], new Date().toISOString().slice(0, 10))}</p>
             <div className="mt-4 space-y-2">
@@ -172,7 +159,6 @@ export function FeesPage() {
 
       <AnimatePresence>
         {activeInvoice && <InvoiceDetailModal invoice={activeInvoice} onClose={() => setActiveInvoice(null)} />}
-        {discountOpen && <DiscountModal students={students} onClose={() => setDiscountOpen(false)} onSaved={() => { setDiscountOpen(false); qc.invalidateQueries({ queryKey: ['invoices'] }); }} />}
         {structureOpen && <FeeStructuresModal structures={structures} onClose={() => setStructureOpen(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['fee-structures'] }); }} />}
       </AnimatePresence>
     </div>
@@ -186,12 +172,37 @@ function InvoiceDetailModal({ invoice, onClose }: { invoice: any; onClose: () =>
     enabled: Boolean(idOf(invoice)),
     retry: false,
   });
+  const downloadPdf = useMutation({
+    mutationFn: () => Fees.invoices.pdf(idOf(invoice)),
+    onSuccess: (blob: Blob) => {
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${textOf(invoice, ['invoiceNumber'], 'invoice')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to download invoice PDF'),
+  });
   const detail = isRecord(detailQuery.data?.data) ? detailQuery.data.data : invoice;
   return (
     <Modal
       title={textOf(invoice, ['invoiceNumber'], 'Invoice')}
       onClose={onClose}
-      footer={<button onClick={onClose} className="btn-ghost">Close</button>}
+      footer={(
+        <div className="flex w-full flex-col sm:flex-row sm:justify-end gap-2">
+          <button
+            onClick={() => downloadPdf.mutate()}
+            disabled={downloadPdf.isPending}
+            className="btn-outline"
+          >
+            {downloadPdf.isPending ? 'Downloading...' : 'Generate PDF'}
+          </button>
+          <button onClick={onClose} className="btn-ghost">Close</button>
+        </div>
+      )}
     >
       {detailQuery.error && (
         <p className="mb-4 rounded-xl border border-warning-bg bg-warning-bg/60 p-3 text-sm text-warning">
@@ -210,51 +221,11 @@ function InvoiceDetailModal({ invoice, onClose }: { invoice: any; onClose: () =>
   );
 }
 
-function DiscountModal({ students, onClose, onSaved }: { students: any[]; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ studentId: '', discountAmount: '', reason: '' });
-  const apply = useMutation({
-    mutationFn: () => Fees.applyDiscount(form.studentId, {
-      discountAmount: Number(form.discountAmount),
-      reason: form.reason,
-    }),
-    onSuccess: (body: any) => {
-      toast.success(body?.message || 'Discount applied');
-      onSaved();
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message || e?.message || 'Failed to apply discount'),
-  });
-  return (
-    <Modal
-      title="Apply scholarship / discount"
-      onClose={onClose}
-      footer={(
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={() => apply.mutate()} disabled={apply.isPending || !form.studentId || Number(form.discountAmount) <= 0} className="btn-primary">
-            {apply.isPending ? 'Applying...' : 'Apply'}
-          </button>
-        </>
-      )}
-    >
-      <div className="space-y-3">
-        <Select label="Student" value={form.studentId} onChange={(studentId) => setForm({ ...form, studentId })}>
-          <option value="">Select student</option>
-          {students.map((student) => (
-            <option key={student.id} value={student.id}>{student.firstName} {student.lastName}</option>
-          ))}
-        </Select>
-        <Input label="Discount amount" type="number" value={form.discountAmount} onChange={(discountAmount) => setForm({ ...form, discountAmount })} />
-        <Input label="Reason" value={form.reason} onChange={(reason) => setForm({ ...form, reason })} />
-      </div>
-    </Modal>
-  );
-}
-
 function FeeStructuresModal({ structures, onClose, onSaved }: { structures: any[]; onClose: () => void; onSaved: () => void }) {
   const [baselineForm, setBaselineForm] = useState({
     classId: '',
     academicYear: defaultAcademicYear(),
-    amount: '',
+    amount: '1',
   });
   const [ledgerYear, setLedgerYear] = useState(defaultAcademicYear());
   const classesQuery = useQuery({ queryKey: ['classes', 'fees'], queryFn: () => Academic.classes.list() });
@@ -313,7 +284,7 @@ function FeeStructuresModal({ structures, onClose, onSaved }: { structures: any[
               <h3 className="font-display text-lg sm:text-xl font-semibold">Create baseline</h3>
               <p className="mt-1 text-sm text-ink-500">Use this to define the amount for one class and year.</p>
             </div>
-            <button onClick={() => create.mutate()} disabled={create.isPending || !baselineForm.classId || !baselineForm.academicYear || Number(baselineForm.amount) <= 0} className="btn-outline">
+            <button onClick={() => create.mutate()} disabled={create.isPending || !baselineForm.classId || !baselineForm.academicYear} className="btn-outline">
               {create.isPending ? 'Saving...' : 'Save baseline'}
             </button>
           </div>
@@ -323,7 +294,6 @@ function FeeStructuresModal({ structures, onClose, onSaved }: { structures: any[
               {classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
             </Select>
             <Input label="Academic year" value={baselineForm.academicYear} onChange={(academicYear) => setBaselineForm({ ...baselineForm, academicYear })} />
-            <Input label="Amount" type="number" value={baselineForm.amount} onChange={(amount) => setBaselineForm({ ...baselineForm, amount })} />
           </div>
         </section>
 

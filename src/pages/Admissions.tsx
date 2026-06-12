@@ -59,7 +59,7 @@ export function AdmissionsPage() {
   }, [applications, query]);
 
   const stats = useMemo(() => {
-    const counts = { APPLIED: 0, VERIFIED: 0, APPROVED: 0, ENROLLED: 0, REJECTED: 0 };
+    const counts = { PENDING: 0, APPLIED: 0, VERIFIED: 0, APPROVED: 0, ENROLLED: 0, REJECTED: 0 };
     for (const app of applications) counts[normalizeStatus(app.status)] += 1;
     return counts;
   }, [applications]);
@@ -208,7 +208,7 @@ export function AdmissionsPage() {
                 <thead className="bg-muted/60">
                   <tr>
                     <Th>Applicant</Th>
-                    <Th>Parent</Th>
+                    <Th>Academic</Th>
                     <Th>Stage</Th>
                     <Th>Submitted</Th>
                     <Th className="text-right pr-6">Actions</Th>
@@ -221,8 +221,10 @@ export function AdmissionsPage() {
                         <ApplicantCell app={app} />
                       </Td>
                       <Td>
-                        <div className="text-sm">{app.parentContact?.fatherName || app.parentContact?.motherName || 'â€”'}</div>
-                        <div className="text-xs text-ink-400">{app.parentContact?.primaryPhone || 'â€”'}</div>
+                        <div className="text-sm font-medium">{app.classAppliedFor || app.academic?.classApplied || '-'}</div>
+                        <div className="text-xs text-ink-400">
+                          {app.academic?.section || '-'} · {app.academic?.enrollmentType || '-'}
+                        </div>
                       </Td>
                       <Td><StatusChip status={app.status} /></Td>
                       <Td className="text-ink-500 text-xs">{formatDate(app.createdAt)}</Td>
@@ -238,22 +240,27 @@ export function AdmissionsPage() {
             </div>
 
             <div className="grid gap-3 lg:hidden p-3">
-              {filtered.map((app) => (
-                <button
-                  key={app.id}
-                  onClick={() => setActive(app)}
-                  className="rounded-2xl border border-line bg-surface p-4 text-left hover:border-brand-300 hover:bg-brand-50/40 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold">{app.firstName} {app.lastName}</div>
-                      <div className="text-xs text-ink-400 mt-1">{app.parentContact?.primaryPhone || app.emergencyContact}</div>
-                    </div>
+                {filtered.map((app) => (
+                  <button
+                    key={app.id}
+                    onClick={() => setActive(app)}
+                    className="rounded-2xl border border-line bg-surface p-4 text-left hover:border-brand-300 hover:bg-brand-50/40 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{app.firstName} {app.lastName}</div>
+                        <div className="text-xs text-ink-400 mt-1">
+                          {app.parentEmail || app.parentContact?.primaryPhone || app.primaryContactNo || app.emergencyContactNo || app.emergencyContact}
+                        </div>
+                        <div className="text-[11px] text-ink-500 mt-1">
+                          {app.bloodGroup || '—'} · {app.classAppliedFor || app.academic?.classApplied || '—'} / {app.academic?.section || '—'}
+                        </div>
+                      </div>
                     <StatusChip status={app.status} />
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs text-ink-500">
                     <span>{formatDate(app.createdAt)}</span>
-                    <span>ID: {app.id.slice(0, 8)}â€¦</span>
+                    <span>ID: {app.id.slice(0, 8)}...</span>
                   </div>
                 </button>
               ))}
@@ -329,18 +336,60 @@ function ApplicationFormModal({
     lastName: '',
     gender: 'MALE',
     dateOfBirth: '',
+    bloodGroup: '',
+    identificationMark: '',
+    nationalId: '',
+    aadharNo: '',
+    emergencyContactName: '',
+    emergencyContactNo: '',
     emergencyContact: '',
+    fatherName: '',
+    motherName: '',
+    guardianName: '',
+    primaryPhone: '',
+    secondaryPhone: '',
+    parentEmail: '',
+    primaryContactNo: '',
+    secondaryContactNo: '',
+    address: {
+      homeAddress: '',
+      city: '',
+      district: '',
+      state: '',
+      pincode: '',
+    },
+    academic: {
+      classApplied: '',
+      section: '',
+      enrollmentType: '',
+      previousSchool: '',
+      lastGradeCompleted: '',
+    },
+    classAppliedFor: '',
+    previousSchoolName: '',
+    isDeclarationSigned: false,
+    isParentSigned: false,
     parentContact: {
       fatherName: '',
       motherName: '',
       primaryPhone: '',
       homeAddress: '',
+      secondaryPhone: '',
+      guardianName: '',
+      parentEmail: '',
+      city: '',
+      district: '',
+      state: '',
+      pincode: '',
     },
   });
+  const address = form.address ?? {};
+  const academic = form.academic ?? {};
+  const parentContact = form.parentContact ?? {};
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    onSubmit(form);
+    onSubmit(buildAdmissionPayload(form));
   }
 
   return (
@@ -352,7 +401,7 @@ function ApplicationFormModal({
         <div className="flex w-full flex-col sm:flex-row sm:justify-end gap-2">
           <button onClick={onClose} className="btn-ghost text-xs md:text-sm px-3 py-2 w-full sm:w-auto">Cancel</button>
           <button onClick={submit} disabled={pending} className="btn-primary text-xs md:text-sm px-3 py-2 w-full sm:w-auto">
-            {pending ? 'Submittingâ€¦' : 'Submit application'}
+            {pending ? 'Submitting...' : 'Submit application'}
           </button>
         </div>
       )}
@@ -372,22 +421,61 @@ function ApplicationFormModal({
               </select>
             </div>
             <Field label="Date of birth" type="date" value={form.dateOfBirth} onChange={(v) => setForm((f) => ({ ...f, dateOfBirth: v }))} />
-            <div className="sm:col-span-2">
-              <Field label="Emergency contact" value={form.emergencyContact} onChange={(v) => setForm((f) => ({ ...f, emergencyContact: v }))} />
-            </div>
+            <Field label="Blood group" value={form.bloodGroup ?? ''} onChange={(v) => setForm((f) => ({ ...f, bloodGroup: v }))} />
+            <Field label="Aadhar no" value={form.aadharNo ?? form.nationalId ?? ''} onChange={(v) => setForm((f) => ({ ...f, aadharNo: v, nationalId: v }))} />
+            <Field label="Identification mark" value={form.identificationMark ?? ''} onChange={(v) => setForm((f) => ({ ...f, identificationMark: v }))} />
+            <Field label="Emergency contact name" value={form.emergencyContactName ?? ''} onChange={(v) => setForm((f) => ({ ...f, emergencyContactName: v }))} />
+            <Field label="Emergency contact no" value={form.emergencyContactNo ?? form.emergencyContact ?? ''} onChange={(v) => setForm((f) => ({ ...f, emergencyContactNo: v, emergencyContact: v }))} />
           </div>
         </section>
 
         <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
           <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Parent / Guardian</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-            <Field label="Father name" value={form.parentContact.fatherName ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentContact: { ...f.parentContact, fatherName: v } }))} />
-            <Field label="Mother name" value={form.parentContact.motherName ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentContact: { ...f.parentContact, motherName: v } }))} />
-            <Field label="Primary phone" value={form.parentContact.primaryPhone ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentContact: { ...f.parentContact, primaryPhone: v } }))} />
+            <Field label="Father name" value={form.fatherName ?? ''} onChange={(v) => setForm((f) => ({ ...f, fatherName: v, parentContact: { ...f.parentContact, fatherName: v } }))} />
+            <Field label="Mother name" value={form.motherName ?? ''} onChange={(v) => setForm((f) => ({ ...f, motherName: v, parentContact: { ...f.parentContact, motherName: v } }))} />
+            <Field label="Guardian name" value={form.guardianName ?? ''} onChange={(v) => setForm((f) => ({ ...f, guardianName: v, parentContact: { ...f.parentContact, guardianName: v } }))} />
+            <Field label="Primary phone" value={form.primaryPhone ?? ''} onChange={(v) => setForm((f) => ({ ...f, primaryPhone: v, parentContact: { ...f.parentContact, primaryPhone: v } }))} />
+            <Field label="Secondary phone" value={form.secondaryPhone ?? ''} onChange={(v) => setForm((f) => ({ ...f, secondaryPhone: v, parentContact: { ...f.parentContact, secondaryPhone: v } }))} />
+            <Field label="Parent email" type="email" value={form.parentEmail ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentEmail: v, parentContact: { ...f.parentContact, parentEmail: v } }))} />
             <div className="sm:col-span-2">
-              <Field label="Home address" value={form.parentContact.homeAddress ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentContact: { ...f.parentContact, homeAddress: v } }))} />
+              <Field label="Home address" value={parentContact.homeAddress ?? ''} onChange={(v) => setForm((f) => ({ ...f, parentContact: { ...f.parentContact, homeAddress: v }, address: { ...f.address, homeAddress: v } }))} />
             </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Address</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            <Field label="City" value={address.city ?? ''} onChange={(v) => setForm((f) => ({ ...f, address: { ...f.address, city: v }, parentContact: { ...f.parentContact, city: v } }))} />
+            <Field label="District" value={address.district ?? ''} onChange={(v) => setForm((f) => ({ ...f, address: { ...f.address, district: v }, parentContact: { ...f.parentContact, district: v } }))} />
+            <Field label="State" value={address.state ?? ''} onChange={(v) => setForm((f) => ({ ...f, address: { ...f.address, state: v }, parentContact: { ...f.parentContact, state: v } }))} />
+            <Field label="Pincode" value={address.pincode ?? ''} onChange={(v) => setForm((f) => ({ ...f, address: { ...f.address, pincode: v }, parentContact: { ...f.parentContact, pincode: v } }))} />
+            <div className="sm:col-span-2">
+              <Field label="Home address" value={address.homeAddress ?? ''} onChange={(v) => setForm((f) => ({ ...f, address: { ...f.address, homeAddress: v }, parentContact: { ...f.parentContact, homeAddress: v } }))} />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-line bg-surface p-4 sm:p-5">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Academic</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            <Field label="Class applied" value={academic.classApplied ?? form.classAppliedFor ?? ''} onChange={(v) => setForm((f) => ({ ...f, classAppliedFor: v, academic: { ...f.academic, classApplied: v } }))} />
+            <Field label="Section" value={academic.section ?? ''} onChange={(v) => setForm((f) => ({ ...f, academic: { ...f.academic, section: v } }))} />
+            <Field label="Enrollment type" value={academic.enrollmentType ?? ''} onChange={(v) => setForm((f) => ({ ...f, academic: { ...f.academic, enrollmentType: v } }))} />
+            <Field label="Previous school" value={academic.previousSchool ?? form.previousSchoolName ?? ''} onChange={(v) => setForm((f) => ({ ...f, previousSchoolName: v, academic: { ...f.academic, previousSchool: v } }))} />
+            <div className="sm:col-span-2">
+              <Field label="Last grade completed" value={academic.lastGradeCompleted ?? ''} onChange={(v) => setForm((f) => ({ ...f, academic: { ...f.academic, lastGradeCompleted: v } }))} />
+            </div>
+          </div>
+          <label className="mt-4 flex items-center gap-3 text-sm text-ink-700">
+            <input
+              type="checkbox"
+              checked={Boolean(form.isParentSigned)}
+              onChange={(e) => setForm((f) => ({ ...f, isParentSigned: e.target.checked, isDeclarationSigned: e.target.checked }))}
+            />
+            Parent signed
+          </label>
         </section>
       </form>
     </Modal>
@@ -422,7 +510,7 @@ function ApplicationDetailModal({
       footer={(
         <div className="flex w-full flex-col sm:flex-row sm:justify-end gap-2">
           <button onClick={onClose} className="btn-ghost text-xs md:text-sm px-3 py-2 w-full sm:w-auto">Close</button>
-          {app.status === 'APPLIED' && (
+          {(app.status === 'APPLIED' || app.status === 'PENDING') && (
             <button onClick={onVerify} disabled={busy} className="btn-outline text-xs md:text-sm px-3 py-2 w-full sm:w-auto">
               Verify
             </button>
@@ -453,18 +541,55 @@ function ApplicationDetailModal({
 
           <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <MiniStat label="DOB" value={formatDate(app.dateOfBirth)} />
-            <MiniStat label="Emergency contact" value={app.emergencyContact} />
+            <MiniStat label="Emergency contact" value={app.emergencyContactNo || app.emergencyContact} />
             <MiniStat label="Submitted" value={formatDate(app.createdAt)} />
             <MiniStat label="Updated" value={formatDate(app.updatedAt)} />
           </div>
 
           <div className="mt-6 rounded-2xl border border-line bg-surface p-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Applicant details</p>
+            <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <InfoPair label="Blood group" value={app.bloodGroup ?? '-'} />
+              <InfoPair label="Aadhar no" value={app.aadharNo ?? app.nationalId ?? '-'} />
+              <InfoPair label="Identification mark" value={app.identificationMark ?? '-'} />
+              <InfoPair label="Guardian name" value={app.guardianName ?? '-'} />
+              <InfoPair label="Primary phone" value={app.primaryContactNo ?? app.primaryPhone ?? app.parentContact?.primaryPhone ?? '-'} />
+              <InfoPair label="Secondary phone" value={app.secondaryContactNo ?? app.secondaryPhone ?? '-'} />
+              <InfoPair label="Parent email" value={app.parentEmail ?? '-'} />
+              <InfoPair label="Emergency contact name" value={app.emergencyContactName ?? '-'} />
+              <InfoPair label="Emergency contact no" value={app.emergencyContactNo ?? app.emergencyContact ?? '-'} />
+              <InfoPair label="Signed by parent" value={(app.isParentSigned ?? app.isDeclarationSigned) ? 'Yes' : 'No'} />
+            </dl>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-line bg-surface p-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Address</p>
+            <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <InfoPair label="Home address" value={app.address?.homeAddress ?? app.parentContact?.homeAddress ?? '-'} />
+              <InfoPair label="City" value={app.address?.city ?? app.parentContact?.city ?? '-'} />
+              <InfoPair label="District" value={app.address?.district ?? app.parentContact?.district ?? '-'} />
+              <InfoPair label="State" value={app.address?.state ?? app.parentContact?.state ?? '-'} />
+              <InfoPair label="Pincode" value={app.address?.pincode ?? app.parentContact?.pincode ?? '-'} />
+            </dl>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-line bg-surface p-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Academic</p>
+            <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <InfoPair label="Class applied" value={app.classAppliedFor ?? app.academic?.classApplied ?? '-'} />
+              <InfoPair label="Enrollment type" value={app.enrollmentType ?? app.academic?.enrollmentType ?? '-'} />
+              <InfoPair label="Previous school" value={app.previousSchoolName ?? app.academic?.previousSchool ?? '-'} />
+              <InfoPair label="Last grade completed" value={app.lastGradeCompleted ?? app.academic?.lastGradeCompleted ?? '-'} />
+            </dl>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-line bg-surface p-4">
             <p className="text-[11px] uppercase tracking-[0.2em] text-brand-600 font-bold">Parent / Guardian</p>
             <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <InfoPair label="Father" value={app.parentContact?.fatherName ?? 'â€”'} />
-              <InfoPair label="Mother" value={app.parentContact?.motherName ?? 'â€”'} />
-              <InfoPair label="Phone" value={app.parentContact?.primaryPhone ?? 'â€”'} />
-              <InfoPair label="Home address" value={app.parentContact?.homeAddress ?? 'â€”'} />
+              <InfoPair label="Father" value={app.parentContact?.fatherName ?? '-'} />
+              <InfoPair label="Mother" value={app.parentContact?.motherName ?? '-'} />
+              <InfoPair label="Phone" value={app.parentContact?.primaryPhone ?? app.primaryContactNo ?? '-'} />
+              <InfoPair label="Home address" value={app.parentContact?.homeAddress ?? '-'} />
             </dl>
           </div>
 
@@ -587,7 +712,7 @@ function EnrollModal({
             disabled={pending || !classId || !sectionId}
             className="btn-primary text-xs md:text-sm px-3 py-2 w-full sm:w-auto"
           >
-            {pending ? 'Enrollingâ€¦' : 'Enroll student'}
+            {pending ? 'Enrolling...' : 'Enroll student'}
           </button>
         </div>
       )}
@@ -636,7 +761,7 @@ function ApplicantCell({ app }: { app: AdmissionApplication }) {
       </div>
       <div>
         <div className="font-semibold">{app.firstName} {app.lastName}</div>
-        <div className="text-xs text-ink-400">{app.parentContact?.primaryPhone ?? app.emergencyContact}</div>
+        <div className="text-xs text-ink-400">{app.parentContact?.primaryPhone ?? app.primaryContactNo ?? app.emergencyContactNo ?? app.emergencyContact}</div>
       </div>
     </div>
   );
@@ -644,6 +769,7 @@ function ApplicantCell({ app }: { app: AdmissionApplication }) {
 
 function StatusChip({ status }: { status: AdmissionStatus }) {
   const tone = {
+    PENDING: 'chip-warning',
     APPLIED: 'chip-warning',
     VERIFIED: 'chip-brand',
     APPROVED: 'chip-success',
@@ -657,7 +783,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-line bg-surface p-3">
       <p className="text-[10px] uppercase tracking-[0.18em] text-ink-400 font-bold">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-ink-900 break-words">{value || 'â€”'}</p>
+      <p className="mt-1 text-sm font-semibold text-ink-900 break-words">{value || '-'}</p>
     </div>
   );
 }
@@ -666,7 +792,7 @@ function InfoPair({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-line p-3 bg-canvas">
       <p className="text-[11px] uppercase tracking-wider text-ink-400">{label}</p>
-      <p className="text-sm text-ink-900 mt-1 break-words">{value || 'â€”'}</p>
+      <p className="text-sm text-ink-900 mt-1 break-words">{value || '-'}</p>
     </div>
   );
 }
@@ -690,6 +816,34 @@ function Field({
   );
 }
 
+function buildAdmissionPayload(form: AdmissionApplyInput): AdmissionApplyInput {
+  const emergencyContact = form.emergencyContactNo || form.emergencyContact;
+  return {
+    ...form,
+    emergencyContact,
+    emergencyContactNo: form.emergencyContactNo || form.emergencyContact,
+    aadharNo: form.aadharNo || form.nationalId,
+    isDeclarationSigned: form.isDeclarationSigned ?? form.isParentSigned,
+    classAppliedFor: form.classAppliedFor || form.academic?.classApplied,
+    previousSchoolName: form.previousSchoolName || form.academic?.previousSchool,
+    primaryContactNo: form.primaryContactNo || form.parentContact.primaryPhone,
+    secondaryContactNo: form.secondaryContactNo || form.parentContact.secondaryPhone,
+    parentContact: {
+      fatherName: form.fatherName || form.parentContact.fatherName,
+      motherName: form.motherName || form.parentContact.motherName,
+      primaryPhone: form.primaryPhone || form.parentContact.primaryPhone,
+      secondaryPhone: form.secondaryPhone || form.parentContact.secondaryPhone,
+      guardianName: form.guardianName || form.parentContact.guardianName,
+      parentEmail: form.parentEmail || form.parentContact.parentEmail,
+      homeAddress: form.address?.homeAddress || form.parentContact.homeAddress,
+      city: form.address?.city || form.parentContact.city,
+      district: form.address?.district || form.parentContact.district,
+      state: form.address?.state || form.parentContact.state,
+      pincode: form.address?.pincode || form.parentContact.pincode,
+    },
+  };
+}
+
 function Th({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <th className={clsx('table-header', className)}>{children}</th>;
 }
@@ -699,7 +853,8 @@ function Td({ children, className = '', mono = false }: { children: ReactNode; c
 }
 
 function normalizeStatus(status: string): AdmissionStatus {
-  return (status || 'APPLIED').toUpperCase() as AdmissionStatus;
+  const normalized = (status || 'APPLIED').toUpperCase();
+  return (normalized === 'PENDING' ? 'APPLIED' : normalized) as AdmissionStatus;
 }
 
 function labelStatus(status: Filter) {
@@ -708,13 +863,13 @@ function labelStatus(status: Filter) {
 }
 
 function formatDate(value?: string) {
-  if (!value) return 'â€”';
+  if (!value) return '-';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value.slice(0, 10) : d.toLocaleDateString();
 }
 
 function resolveDocumentUrl(url: string) {
-  if (!url) return 'â€”';
+  if (!url) return '-';
   if (/^https?:\/\//i.test(url)) return url;
   return `${getPublicOrigin()}/${url.replace(/^\//, '')}`;
 }
@@ -732,7 +887,7 @@ function initials(firstName: string, lastName: string) {
 }
 
 function stageIndex(status: AdmissionStatus) {
-  return { APPLIED: 0, VERIFIED: 1, APPROVED: 2, ENROLLED: 3, REJECTED: 0 }[status] ?? 0;
+  return { PENDING: 0, APPLIED: 0, VERIFIED: 1, APPROVED: 2, ENROLLED: 3, REJECTED: 0 }[status] ?? 0;
 }
 
 

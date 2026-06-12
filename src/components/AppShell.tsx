@@ -153,11 +153,6 @@ export function AppShell() {
               <Icon name="dashboard" size={18} />
             </button>
 
-            <div className="relative max-w-md w-full hidden sm:block">
-              <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
-              <input placeholder="Search students, staff, invoices…" className="input pl-9 h-10" />
-            </div>
-
             <div className="sm:hidden flex-1">
               <div className="text-[11px] uppercase tracking-[0.18em] text-ink-400 font-semibold">Schoolmate</div>
               <div className="text-sm font-semibold text-ink-900">Admin console</div>
@@ -179,9 +174,19 @@ export function AppShell() {
                   {user?.role.replace('_', ' ')}
                 </div>
               </div>
-              <div className="h-10 w-10 rounded-full bg-brand-gradient text-white grid place-items-center font-semibold text-sm shadow-pop-30">
-                {user?.firstName?.[0]}
-                {user?.lastName?.[0]}
+              <div className="h-10 w-10 overflow-hidden rounded-full bg-brand-gradient text-white grid place-items-center font-semibold text-sm shadow-pop-30">
+                {user?.profileImageUrl ? (
+                  <img
+                    src={user.profileImageUrl}
+                    alt={`${user.firstName} ${user.lastName}`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <>
+                    {user?.firstName?.[0]}
+                    {user?.lastName?.[0]}
+                  </>
+                )}
               </div>
             </div>
           </div>

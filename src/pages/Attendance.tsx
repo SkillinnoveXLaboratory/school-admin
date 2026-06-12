@@ -24,6 +24,9 @@ export function AttendancePage() {
   const [marks, setMarks] = useState<MarkState>({});
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [activeStudent, setActiveStudent] = useState<Student | null>(null);
+  const [studentReportStudentId, setStudentReportStudentId] = useState('');
+  const [studentReportStartDate, setStudentReportStartDate] = useState(today.slice(0, 7) + '-01');
+  const [studentReportEndDate, setStudentReportEndDate] = useState(today);
 
   const classesQuery = useQuery({
     queryKey: ['classes'],
@@ -56,6 +59,12 @@ export function AttendancePage() {
   const students = studentsQuery.data?.students ?? [];
 
   useEffect(() => {
+    if (!studentReportStudentId && students.length) {
+      setStudentReportStudentId(students[0].id);
+    }
+  }, [students, studentReportStudentId]);
+
+  useEffect(() => {
     setMarks((current) => {
       const next: MarkState = {};
       students.forEach((student) => {
@@ -79,6 +88,14 @@ export function AttendancePage() {
   const leavesQuery = useQuery({
     queryKey: ['attendance-leaves'],
     queryFn: () => AttendanceApi.listLeaves({ page: 1, limit: 50 }),
+  });
+  const studentReportQuery = useQuery({
+    queryKey: ['attendance-student-report', studentReportStudentId, studentReportStartDate, studentReportEndDate],
+    queryFn: () => AttendanceApi.forStudent(studentReportStudentId, {
+      startDate: studentReportStartDate,
+      endDate: studentReportEndDate,
+    }),
+    enabled: Boolean(studentReportStudentId),
   });
 
   const counts = useMemo(() => {
@@ -127,13 +144,6 @@ export function AttendancePage() {
           <>
             <button onClick={() => setLeaveOpen(true)} className="btn-outline">
               <Icon name="plus" size={16} /> Leave request
-            </button>
-            <button
-              onClick={() => saveAttendance.mutate()}
-              disabled={saveAttendance.isPending || !students.length || !activeClassId || !activeSectionId}
-              className="btn-primary"
-            >
-              <Icon name="check" size={16} /> {saveAttendance.isPending ? 'Saving...' : 'Submit attendance'}
             </button>
           </>
         }
@@ -186,7 +196,89 @@ export function AttendancePage() {
         <Stat label="Half day" value={counts.HALF_DAY} apiValue={textOf(aggregate, ['halfDay'], '')} tone="chip-brand" />
       </section>
 
-      <section className="card overflow-hidden">
+      <section className="card p-4 sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="font-display text-lg font-semibold">Student attendance report</h2>
+            <p className="text-sm text-ink-500">Pick a student from the selected class and view the live logs from `/attendance/student/:studentId`.</p>
+          </div>
+          <span className="chip-brand">{students.length} students loaded</span>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Field label="Student">
+            <select
+              className="input mt-2"
+              value={studentReportStudentId}
+              onChange={(event) => setStudentReportStudentId(event.target.value)}
+            >
+              <option value="">Select student</option>
+              {students.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.firstName} {student.lastName} - {student.email || compactId(student.id)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Start date">
+            <input
+              className="input mt-2"
+              type="date"
+              value={studentReportStartDate}
+              onChange={(event) => setStudentReportStartDate(event.target.value)}
+            />
+          </Field>
+          <Field label="End date">
+            <input
+              className="input mt-2"
+              type="date"
+              value={studentReportEndDate}
+              onChange={(event) => setStudentReportEndDate(event.target.value)}
+            />
+          </Field>
+          <div className="rounded-2xl bg-brand-50 p-3">
+            <p className="label">Logs found</p>
+            <p className="mt-1 font-display text-2xl font-bold text-brand-700">
+              {rowsFrom<any>(studentReportQuery.data, ['logs', 'data']).length}
+            </p>
+            <p className="text-xs text-ink-500">live attendance entries</p>
+          </div>
+        </div>
+
+        <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[720px]">
+            <thead className="bg-muted/60">
+              <tr>
+                <th className="table-header">Date</th>
+                <th className="table-header">Status</th>
+                <th className="table-header">Method</th>
+                <th className="table-header">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rowsFrom<any>(studentReportQuery.data, ['logs', 'data']).map((log) => (
+                <tr key={idOf(log) || `${textOf(log, ['date'], '')}-${textOf(log, ['status'], '')}`} className="hover:bg-muted/40">
+                  <td className="table-cell">{formatDate(textOf(log, ['date'], ''))}</td>
+                  <td className="table-cell">
+                    <span className={statusClass(textOf(log, ['status'], ''))}>{textOf(log, ['status'], '—')}</span>
+                  </td>
+                  <td className="table-cell">{textOf(log, ['method'], '—')}</td>
+                  <td className="table-cell">{textOf(log, ['remarks'], '—')}</td>
+                </tr>
+              ))}
+              {!rowsFrom<any>(studentReportQuery.data, ['logs', 'data']).length && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-10 text-center text-sm text-ink-400">
+                    {studentReportQuery.isLoading ? 'Loading student attendance...' : 'No attendance logs returned for this student.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="hidden card overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="font-display text-lg font-semibold">Roster marking</h2>
